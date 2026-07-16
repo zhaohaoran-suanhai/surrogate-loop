@@ -77,12 +77,24 @@ def doctor_solver_environment(repo_root: Path) -> dict[str, object]:
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "未知错误"
         raise RuntimeError(f"FEniCSx 环境诊断失败：{detail}")
+    payload = parse_solver_json(completed.stdout, "doctor")
+    return _validate_doctor_payload(payload)
+
+
+def parse_solver_json(stdout: str, action: str) -> dict[str, object]:
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     try:
-        payload = json.loads(completed.stdout)
+        payload = json.loads(lines[-1])
     except json.JSONDecodeError as error:
-        raise RuntimeError("FEniCSx doctor 未返回有效 JSON") from error
+        raise RuntimeError(f"FEniCSx {action} 未返回有效 JSON") from error
+    except IndexError as error:
+        raise RuntimeError(f"FEniCSx {action} 未返回有效 JSON") from error
     if not isinstance(payload, dict):
-        raise RuntimeError("FEniCSx doctor 返回值必须是 JSON 对象")
+        raise RuntimeError(f"FEniCSx {action} 返回值必须是 JSON 对象")
+    return payload
+
+
+def _validate_doctor_payload(payload: dict[str, object]) -> dict[str, object]:
     required = {
         "status",
         "python",

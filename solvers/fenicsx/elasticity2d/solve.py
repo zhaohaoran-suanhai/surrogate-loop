@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import psutil
 import pyamg
 import scipy.sparse.linalg
 import ufl
@@ -22,6 +23,7 @@ class SolvedCase:
     applied_force: np.ndarray
     solve_seconds: float
     iterations: int
+    observed_peak_rss_mb: float
     stress_summary: dict[str, float]
 
 
@@ -37,6 +39,7 @@ def solve_case(
         raise ValueError("线性求解容差必须是有限正数")
 
     problem = build_elasticity_problem(parameters, mesh_shape)
+    memory = _MemoryTracker()
 
     unconstrained_matrix = fem.assemble_matrix(problem.bilinear_form).to_scipy()
     unconstrained_vector = fem.assemble_vector(problem.linear_form)
@@ -54,6 +57,7 @@ def solve_case(
     )
     right_hand_side.scatter_reverse(la.InsertMode.add)
     problem.clamp_bc.set(right_hand_side.array)
+    memory.sample()
 
     started = time.perf_counter()
     if backend == "pyamg":
@@ -72,6 +76,7 @@ def solve_case(
         )
         iterations = 1
     solve_seconds = time.perf_counter() - started
+    memory.sample()
 
     solution = fem.Function(problem.function_space, dtype=np.float64)
     solution.x.array[:] = coefficients
@@ -86,6 +91,8 @@ def solve_case(
     reaction = physical_residual.reshape(-1, 2)[problem.clamp_dofs].sum(axis=0)
     applied_force = raw_rhs.reshape(-1, 2).sum(axis=0)
 
+    stress_summary = _stress_summary(problem, solution)
+    memory.sample()
     return SolvedCase(
         solution=solution,
         relative_residual=relative_residual,
@@ -93,8 +100,20 @@ def solve_case(
         applied_force=np.asarray(applied_force, dtype=np.float64),
         solve_seconds=float(solve_seconds),
         iterations=iterations,
-        stress_summary=_stress_summary(problem, solution),
+        observed_peak_rss_mb=memory.peak_rss_mb,
+        stress_summary=stress_summary,
     )
+
+
+class _MemoryTracker:
+    def __init__(self) -> None:
+        self._process = psutil.Process()
+        self.peak_rss_mb = 0.0
+        self.sample()
+
+    def sample(self) -> None:
+        rss_mb = self._process.memory_info().rss / (1024.0 * 1024.0)
+        self.peak_rss_mb = max(self.peak_rss_mb, float(rss_mb))
 
 
 def _stress_summary(problem: Any, solution: Any) -> dict[str, float]:

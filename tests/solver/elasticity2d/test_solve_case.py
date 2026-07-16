@@ -33,6 +33,7 @@ def test_tiny_case_is_finite_clamped_and_balanced() -> None:
     )
     assert case.iterations > 0
     assert case.solve_seconds > 0.0
+    assert case.observed_peak_rss_mb > 0.0
     assert np.isfinite(case.stress_summary["von_mises_max"])
 
     coordinates = observation_coordinates(17, 5)

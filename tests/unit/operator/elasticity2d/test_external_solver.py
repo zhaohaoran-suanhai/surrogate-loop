@@ -104,6 +104,32 @@ def test_doctor_validates_required_versions(monkeypatch, tmp_path) -> None:
     assert doctor_solver_environment(tmp_path) == payload
 
 
+def test_doctor_ignores_conda_wrapper_output_before_final_json(
+    monkeypatch, tmp_path
+) -> None:
+    payload = {
+        "status": "ok",
+        "python": "3.12.13",
+        "dolfinx": "0.11.0",
+        "pyamg": "5.3.0",
+        "scipy": "1.18.0",
+        "petsc4py_available": False,
+    }
+    wrapped_stdout = (
+        "(surrogate-loop-fenicsx-0.11)>SET DISTUTILS_USE_SDK=1\n"
+        + json.dumps(payload)
+        + "\n"
+    )
+    monkeypatch.setattr(
+        "surrogate_loop.operator.external_solver.run_solver_process",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            [], 0, wrapped_stdout, ""
+        ),
+    )
+
+    assert doctor_solver_environment(tmp_path) == payload
+
+
 def test_doctor_rejects_petsc_windows_environment(monkeypatch, tmp_path) -> None:
     payload = {
         "status": "ok",
