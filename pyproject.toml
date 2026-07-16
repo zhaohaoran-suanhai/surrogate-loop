@@ -38,7 +38,10 @@ packages = ["src/surrogate_loop"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-markers = ["operator: requires the optional PyTorch operator environment"]
+markers = [
+  "operator: requires the optional PyTorch operator environment",
+  "fenicsx: requires the isolated FEniCSx Conda environment",
+]
 
 [tool.ruff]
 target-version = "py311"
