@@ -1,0 +1,24 @@
+{
+  "mode": "smoke",
+  "problem": {
+    "template": "forced_reaction_scalar_endpoint_v1",
+    "gamma": {"low": -1.0, "high": 1.0},
+    "time_start": 0.0,
+    "time_end": 1.0,
+    "initial_value": 0.0,
+    "forcing_coefficient": 0.5
+  },
+  "sampling": {
+    "seed": 20260716,
+    "train_cases": 24,
+    "validation_cases": 8,
+    "test_cases": 8
+  },
+  "models": {
+    "candidates": ["prs_1", "prs_2", "prs_3", "gpr", "mlp"]
+  },
+  "acceptance": {
+    "max_nrmse": 0.03,
+    "max_absolute_error": 0.01
+  }
+}
