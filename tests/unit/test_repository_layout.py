@@ -1,0 +1,41 @@
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_required_repository_paths_exist() -> None:
+    required_paths = (
+        "AGENTS.md",
+        "README.md",
+        "pyproject.toml",
+        "docs/2026-07-16-标量代理模型闭环设计.md",
+        "docs/2026-07-16-仓库骨架与基础环境实施计划.md",
+        "docs/architecture/README.md",
+        "docs/guides/环境与验证.md",
+        "src/surrogate_loop/__init__.py",
+        "src/surrogate_loop/__main__.py",
+        "src/surrogate_loop/cli.py",
+        "examples/forced_reaction_scalar/README.md",
+        "tests/unit",
+        "tests/integration",
+        "tests/e2e",
+        "runs/.gitkeep",
+    )
+
+    missing = [path for path in required_paths if not (REPO_ROOT / path).exists()]
+
+    assert missing == []
+
+
+def test_readme_explains_repository_boundaries() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    for required_text in (
+        "项目文档",
+        "核心代码",
+        "可复现算例",
+        "自动化测试",
+        "运行产物",
+        "目标接口，尚未实现",
+    ):
+        assert required_text in readme
