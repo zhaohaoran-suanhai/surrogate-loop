@@ -12,10 +12,29 @@ SOLVER_MODULE = "solvers.fenicsx.elasticity2d.cli"
 ALLOWED_ACTIONS = frozenset({"doctor", "calibrate", "generate"})
 
 
+def _default_conda_candidates() -> tuple[Path, ...]:
+    home = Path.home()
+    return (
+        home / "miniforge3" / "Scripts" / "conda.exe",
+        home / "Miniforge3" / "Scripts" / "conda.exe",
+        home / "AppData" / "Local" / "miniforge3" / "Scripts" / "conda.exe",
+    )
+
+
+def _find_conda() -> str | None:
+    located = shutil.which("conda")
+    if located is not None:
+        return located
+    return next(
+        (str(candidate) for candidate in _default_conda_candidates() if candidate.is_file()),
+        None,
+    )
+
+
 def build_solver_command(action: str, *arguments: str) -> list[str]:
     if action not in ALLOWED_ACTIONS:
         raise ValueError("外部求解器只允许 doctor、calibrate、generate 三种固定动作")
-    conda = shutil.which("conda")
+    conda = _find_conda()
     if conda is None:
         raise RuntimeError("未找到 Conda；请先安装 Miniforge 并重新打开终端")
     return [

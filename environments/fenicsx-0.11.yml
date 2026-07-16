@@ -1,6 +1,7 @@
 name: surrogate-loop-fenicsx-0.11
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
   - python=3.12
   - fenics-dolfinx=0.11.*

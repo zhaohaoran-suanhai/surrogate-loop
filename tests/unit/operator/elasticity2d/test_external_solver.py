@@ -59,9 +59,30 @@ def test_unknown_solver_action_is_rejected(monkeypatch) -> None:
 
 def test_missing_conda_has_actionable_error(monkeypatch) -> None:
     monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        "surrogate_loop.operator.external_solver._default_conda_candidates",
+        lambda: (),
+    )
 
     with pytest.raises(RuntimeError, match="Miniforge"):
         build_solver_command("doctor")
+
+
+def test_solver_command_finds_default_miniforge_when_path_is_stale(
+    monkeypatch, tmp_path
+) -> None:
+    conda = tmp_path / "miniforge3/Scripts/conda.exe"
+    conda.parent.mkdir(parents=True)
+    conda.touch()
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        "surrogate_loop.operator.external_solver._default_conda_candidates",
+        lambda: (conda,),
+    )
+
+    command = build_solver_command("doctor")
+
+    assert command[0] == str(conda)
 
 
 def test_doctor_validates_required_versions(monkeypatch, tmp_path) -> None:
@@ -110,4 +131,5 @@ def test_fenicsx_environment_uses_windows_pyamg_contract() -> None:
     assert "fenics-dolfinx=0.11.*" in environment
     assert "pyamg>=5,<6" in environment
     assert "psutil>=5,<7" in environment
+    assert "nodefaults" in environment
     assert "petsc" not in environment.lower()
