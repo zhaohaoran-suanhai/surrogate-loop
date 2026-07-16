@@ -19,7 +19,7 @@ u(0) = 0
 gamma -> u(1)
 ```
 
-当前里程碑只建立仓库骨架、基础环境和最小 CLI 入口，尚未实现数据生成和模型训练。
+当前版本已经实现结构化配置校验、ODE 数据生成、候选模型训练、验证集选模、测试集验收、产物保存、重载推理和域外拒绝。
 
 ## 环境要求
 
@@ -37,9 +37,9 @@ uv run ruff check .
 uv run pytest
 ```
 
-## 目标接口，尚未实现
+## 已实现接口
 
-以下命令是后续里程碑要实现的稳定接口，目前不可用于训练：
+以下命令构成第一个可运行闭环：
 
 ```powershell
 surrogate-loop validate --config examples/forced_reaction_scalar/full.json
@@ -48,6 +48,12 @@ surrogate-loop run --config examples/forced_reaction_scalar/full.json
 surrogate-loop report --run-dir runs/示例运行标识
 surrogate-loop predict --run-dir runs/示例运行标识 --gamma 0.35
 ```
+
+例如，用户可以先用自然语言告诉 Codex：
+
+> 使用 gamma 在 -1 到 1 之间的强迫反应 ODE，运行冒烟训练，比较全部候选模型并预测 gamma=0.35 时的 u(1)。
+
+Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smoke.json`，再调用固定 CLI；Python 程序负责全部科学计算和验收，不执行自然语言生成的代码。
 
 ## 仓库结构
 
@@ -62,6 +68,7 @@ surrogate-loop predict --run-dir runs/示例运行标识 --gamma 0.35
 - [标量代理模型闭环设计](docs/2026-07-16-标量代理模型闭环设计.md)
 - [仓库骨架与基础环境实施计划](docs/2026-07-16-仓库骨架与基础环境实施计划.md)
 - [环境与验证指南](docs/guides/环境与验证.md)
+- [标量闭环操作指南](docs/guides/标量闭环操作指南.md)
 - [第一个标量 ODE 算例](examples/forced_reaction_scalar/README.md)
 
 ## 明确不支持

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, RBF
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel
 from sklearn.linear_model import Ridge
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline

@@ -36,6 +36,8 @@ def test_readme_explains_repository_boundaries() -> None:
         "可复现算例",
         "自动化测试",
         "运行产物",
-        "目标接口，尚未实现",
+        "已实现接口",
     ):
         assert required_text in readme
+
+    assert "目标接口，尚未实现" not in readme

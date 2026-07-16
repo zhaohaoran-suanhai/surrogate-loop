@@ -6,7 +6,6 @@ from pydantic import ValidationError
 
 from surrogate_loop.config import RunSpec, load_spec
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 

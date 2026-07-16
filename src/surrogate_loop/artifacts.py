@@ -5,14 +5,15 @@ import json
 import os
 import platform
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import joblib
 import matplotlib
 import numpy as np
-from importlib.metadata import version
 
 from surrogate_loop.config import RunSpec
 from surrogate_loop.data import CaseDataset

@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
 ModelName = Literal["prs_1", "prs_2", "prs_3", "gpr", "mlp"]
 
 
@@ -19,7 +18,7 @@ class ParameterRange(StrictModel):
     high: float
 
     @model_validator(mode="after")
-    def validate_bounds(self) -> "ParameterRange":
+    def validate_bounds(self) -> ParameterRange:
         if self.low < -1.0 or self.high > 1.0:
             raise ValueError("gamma 范围必须位于 [-1, 1]")
         if self.low >= self.high:
@@ -67,7 +66,7 @@ class RunSpec(StrictModel):
     acceptance: AcceptanceSpec
 
     @model_validator(mode="after")
-    def validate_canonical_scale(self) -> "RunSpec":
+    def validate_canonical_scale(self) -> RunSpec:
         actual = (
             self.sampling.train_cases,
             self.sampling.validation_cases,

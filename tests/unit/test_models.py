@@ -3,7 +3,6 @@ import pytest
 
 from surrogate_loop.models import build_candidates
 
-
 pytestmark = pytest.mark.filterwarnings("ignore::sklearn.exceptions.ConvergenceWarning")
 
 
