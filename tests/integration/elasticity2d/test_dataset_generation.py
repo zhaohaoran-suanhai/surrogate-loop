@@ -210,6 +210,7 @@ def _write_fake_solver_output(output_dir, spec, plan) -> Path:
             "backend": "pyamg",
             "tolerance": 1e-10,
             "element": "Lagrange-P2-triangle",
+            "timing_scope": "assembly_solve_interpolation",
         },
         "coordinates": coordinates.tolist(),
         "samples": records,

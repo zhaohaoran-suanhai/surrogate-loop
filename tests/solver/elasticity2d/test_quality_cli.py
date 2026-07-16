@@ -76,6 +76,10 @@ def test_generate_writes_physically_separate_datasets(tmp_path: Path) -> None:
     assert manifest_path.is_file()
     assert diagnostics_path.is_file()
     assert manifest.development_sha256 != manifest.sealed_test_sha256
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest_payload["solver"]["timing_scope"] == (
+        "assembly_solve_interpolation"
+    )
 
     with np.load(development, allow_pickle=False) as arrays:
         assert arrays["sample_ids"].tolist() == [

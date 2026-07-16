@@ -7,6 +7,7 @@ import os
 import platform
 import re
 import tempfile
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -123,6 +124,7 @@ def generate_datasets(job_path: Path, output_dir: Path) -> DatasetManifest:
     records: list[dict[str, Any]] = []
     fields: list[np.ndarray] = []
     for sample in job.samples:
+        case_started = time.perf_counter()
         case = solve_case(
             sample.parameters,
             job.solver.mesh_shape,
@@ -131,6 +133,7 @@ def generate_datasets(job_path: Path, output_dir: Path) -> DatasetManifest:
         )
         values = interpolate_displacement(case.solution, coordinates)
         diagnostics = _case_diagnostics(case, values, coordinates)
+        diagnostics["solve_seconds"] = time.perf_counter() - case_started
         _enforce_case_quality(sample.sample_id, diagnostics, job.quality)
         fields.append(values)
         records.append(
@@ -195,6 +198,7 @@ def generate_datasets(job_path: Path, output_dir: Path) -> DatasetManifest:
             "mesh_shape": list(job.solver.mesh_shape),
             "observation_shape": list(job.solver.observation_shape),
             "element": "Lagrange-P2-triangle",
+            "timing_scope": "assembly_solve_interpolation",
         },
         "coordinates": coordinates.tolist(),
         "samples": records,

@@ -240,6 +240,7 @@ def _validate_manifest(
         or solver.get("observation_shape") != [spec.observation.nx, spec.observation.ny]
         or solver.get("backend") != spec.solver.backend
         or solver.get("element") != "Lagrange-P2-triangle"
+        or solver.get("timing_scope") != "assembly_solve_interpolation"
     ):
         raise RuntimeError("FEniCSx 数据清单求解器配置无效")
     coordinates = _expected_coordinates(spec)
