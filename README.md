@@ -36,7 +36,7 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 
 该闭环使用 Crank–Nicolson 生成数值标签、解析解验证求解器、POD/GPR 建立诊断基线，并用 PyTorch DeepONet 学习参数到完整温度场的算子映射。DeepONet 必须独立通过测试集验收，基线不能替代它。
 
-锁定 Smoke 配置已在 RTX 4060 Laptop GPU 上完成端到端验收：训练约 86 秒，独立测试集中位相对 L2 误差为 1.51%，状态为 `accepted`。完整指标和复现说明见操作指南。
+锁定的 Smoke 与 Full 配置均已在 RTX 4060 Laptop GPU 上完成端到端验收。Full 使用 512/96/128 个训练、验证、测试算例，训练约 88 秒，独立测试集中位相对 L2 误差为 0.731%，状态为 `accepted`。完整指标和复现说明见操作指南。
 
 ## 环境要求
 
