@@ -1,0 +1,45 @@
+{
+  "mode": "smoke",
+  "problem": {
+    "template": "heat_1d_operator_v1",
+    "alpha": {"low": 0.05, "high": 0.2},
+    "amplitude_1": {"low": 0.8, "high": 1.2},
+    "amplitude_2": {"low": -0.3, "high": 0.3},
+    "x_start": 0.0,
+    "x_end": 1.0,
+    "t_start": 0.0,
+    "t_end": 1.0
+  },
+  "grid": {"nx": 17, "nt": 11},
+  "sampling": {
+    "seed": 20260716,
+    "train_cases": 8,
+    "validation_cases": 2,
+    "test_cases": 2
+  },
+  "solver_acceptance": {
+    "max_boundary_error": 1e-10,
+    "max_p95_relative_l2": 0.1
+  },
+  "pod": {"energy_threshold": 0.99, "max_components": 4},
+  "model": {"hidden_width": 16, "hidden_layers": 2, "latent_dim": 8},
+  "training": {
+    "max_epochs": 2,
+    "patience": 2,
+    "case_batch_size": 4,
+    "query_batch_size": 32,
+    "learning_rate": 0.001,
+    "lr_factor": 0.5,
+    "min_learning_rate": 1e-6,
+    "min_delta": 1e-6,
+    "max_minutes": 1.0
+  },
+  "acceptance": {
+    "max_median_relative_l2": 10.0,
+    "max_p95_relative_l2": 10.0,
+    "max_worst_relative_l2": 10.0,
+    "max_initial_relative_l2": 10.0,
+    "max_boundary_absolute_error": 10.0
+  },
+  "runtime": {"device": "cpu", "dtype": "float32"}
+}
