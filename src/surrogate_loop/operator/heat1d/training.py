@@ -43,6 +43,23 @@ class TrainingResult:
     peak_cuda_memory_mb: float
 
 
+class TrainingFailure(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        failure_epoch: int,
+        state_dict: dict[str, Tensor],
+        history: tuple[TrainingRecord, ...],
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.failure_epoch = failure_epoch
+        self.state_dict = state_dict
+        self.history = history
+
+
 def train_deeponet(
     spec: OperatorRunSpec,
     split: TrainingSplit,
@@ -102,45 +119,81 @@ def train_deeponet(
             query_indices = rng.choice(
                 train_coordinates.shape[0], size=query_count, replace=False
             )
-            branch = torch.as_tensor(train_parameters[case_indices], device=device)
-            trunk = torch.as_tensor(train_coordinates[query_indices], device=device)
-            physical_branch = torch.as_tensor(
-                train_physical_parameters[case_indices], device=device
-            )
-            physical_trunk = torch.as_tensor(
-                train_physical_coordinates[query_indices], device=device
-            )
-            target = torch.as_tensor(
-                train_targets[case_indices][:, query_indices], device=device
-            )
-            optimizer.zero_grad(set_to_none=True)
-            prediction = apply_heat_constraints(
-                model(branch, trunk),
-                physical_branch,
-                physical_trunk,
-                normalization.target_mean,
-                normalization.target_std,
-            )
-            loss = nn.functional.mse_loss(prediction, target)
-            if not torch.isfinite(loss):
-                raise FloatingPointError("DeepONet 训练损失出现 NaN 或 Inf")
-            loss.backward()
-            optimizer.step()
+            try:
+                branch = torch.as_tensor(train_parameters[case_indices], device=device)
+                trunk = torch.as_tensor(train_coordinates[query_indices], device=device)
+                physical_branch = torch.as_tensor(
+                    train_physical_parameters[case_indices], device=device
+                )
+                physical_trunk = torch.as_tensor(
+                    train_physical_coordinates[query_indices], device=device
+                )
+                target = torch.as_tensor(
+                    train_targets[case_indices][:, query_indices], device=device
+                )
+                optimizer.zero_grad(set_to_none=True)
+                prediction = apply_heat_constraints(
+                    model(branch, trunk),
+                    physical_branch,
+                    physical_trunk,
+                    normalization.target_mean,
+                    normalization.target_std,
+                )
+                loss = nn.functional.mse_loss(prediction, target)
+                if not torch.isfinite(loss):
+                    raise _training_failure(
+                        "DeepONet 训练损失出现 NaN 或 Inf",
+                        "non_finite_train_loss",
+                        epoch,
+                        model,
+                        history,
+                        best_state,
+                    )
+                loss.backward()
+                optimizer.step()
+            except TrainingFailure:
+                raise
+            except torch.cuda.OutOfMemoryError as error:
+                raise _training_failure(
+                    "DeepONet 训练发生 CUDA OOM",
+                    "cuda_oom",
+                    epoch,
+                    model,
+                    history,
+                    best_state,
+                ) from error
             batch_losses.append(float(loss.detach().cpu()))
 
-        validation_prediction = _predict_normalized(
-            model,
-            validation_parameters,
-            validation_coordinates,
-            validation_physical_parameters,
-            validation_physical_coordinates,
-            normalization,
-            device,
-            spec.training.query_batch_size,
-        )
+        try:
+            validation_prediction = _predict_normalized(
+                model,
+                validation_parameters,
+                validation_coordinates,
+                validation_physical_parameters,
+                validation_physical_coordinates,
+                normalization,
+                device,
+                spec.training.query_batch_size,
+            )
+        except torch.cuda.OutOfMemoryError as error:
+            raise _training_failure(
+                "DeepONet 验证发生 CUDA OOM",
+                "cuda_oom",
+                epoch,
+                model,
+                history,
+                best_state,
+            ) from error
         validation_loss = float(np.mean((validation_prediction - validation_targets) ** 2))
         if not np.isfinite(validation_loss):
-            raise FloatingPointError("DeepONet 验证损失出现 NaN 或 Inf")
+            raise _training_failure(
+                "DeepONet 验证损失出现 NaN 或 Inf",
+                "non_finite_validation_loss",
+                epoch,
+                model,
+                history,
+                best_state,
+            )
         scheduler.step(validation_loss)
         learning_rate = float(optimizer.param_groups[0]["lr"])
         history.append(
@@ -252,4 +305,31 @@ def _predict_normalized(
 def _coordinate_grid(dataset: HeatDataset) -> NDArray[np.float64]:
     return np.stack(np.meshgrid(dataset.x, dataset.t, indexing="xy"), axis=-1).reshape(
         -1, 2
+    )
+
+
+def _training_failure(
+    message: str,
+    reason: str,
+    epoch: int,
+    model: DeepONet,
+    history: list[TrainingRecord],
+    best_state: dict[str, Tensor],
+) -> TrainingFailure:
+    if next(model.parameters()).device.type == "cuda":
+        torch.cuda.empty_cache()
+    state_dict = (
+        {name: tensor.detach().cpu().clone() for name, tensor in best_state.items()}
+        if best_state
+        else {
+            name: tensor.detach().cpu().clone()
+            for name, tensor in model.state_dict().items()
+        }
+    )
+    return TrainingFailure(
+        message,
+        reason=reason,
+        failure_epoch=epoch,
+        state_dict=state_dict,
+        history=tuple(history),
     )

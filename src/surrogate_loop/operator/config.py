@@ -150,16 +150,59 @@ class OperatorRunSpec(StrictModel):
                 raise ValueError("full 网格必须为 (129, 101)")
             if cases != (512, 96, 128):
                 raise ValueError("full 工况数必须为 (512, 96, 128)")
-            expected_training = (600, 60, 32, 512, 60.0)
+            expected_solver = (1e-10, 1e-3)
+            actual_solver = (
+                self.solver_acceptance.max_boundary_error,
+                self.solver_acceptance.max_p95_relative_l2,
+            )
+            if actual_solver != expected_solver:
+                raise ValueError(f"full 求解器验收合同必须为 {expected_solver}")
+            expected_pod = (0.999, 32)
+            actual_pod = (self.pod.energy_threshold, self.pod.max_components)
+            if actual_pod != expected_pod:
+                raise ValueError(f"full POD 合同必须为 {expected_pod}")
+            expected_model = (128, 3, 128)
+            actual_model = (
+                self.model.hidden_width,
+                self.model.hidden_layers,
+                self.model.latent_dim,
+            )
+            if actual_model != expected_model:
+                raise ValueError(f"full 网络合同必须为 {expected_model}")
+            expected_training = (
+                600,
+                60,
+                32,
+                512,
+                1e-3,
+                0.5,
+                1e-6,
+                1e-6,
+                60.0,
+            )
             actual_training = (
                 self.training.max_epochs,
                 self.training.patience,
                 self.training.case_batch_size,
                 self.training.query_batch_size,
+                self.training.learning_rate,
+                self.training.lr_factor,
+                self.training.min_learning_rate,
+                self.training.min_delta,
                 self.training.max_minutes,
             )
             if actual_training != expected_training:
                 raise ValueError(f"full 训练预算必须为 {expected_training}")
+            expected_acceptance = (0.02, 0.05, 0.1, 0.05, 0.01)
+            actual_acceptance = (
+                self.acceptance.max_median_relative_l2,
+                self.acceptance.max_p95_relative_l2,
+                self.acceptance.max_worst_relative_l2,
+                self.acceptance.max_initial_relative_l2,
+                self.acceptance.max_boundary_absolute_error,
+            )
+            if actual_acceptance != expected_acceptance:
+                raise ValueError(f"full DeepONet 验收合同必须为 {expected_acceptance}")
         else:
             if self.grid.nx > 65 or self.grid.nt > 51:
                 raise ValueError("smoke 网格不能超过 (65, 51)")

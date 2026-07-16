@@ -143,24 +143,15 @@ def _handle_operator(arguments: argparse.Namespace) -> None:
         )
         return
     if arguments.operator_command == "report":
-        manifest = json.loads(
-            (arguments.run_dir / "manifest.json").read_text(encoding="utf-8")
-        )
-        test_metrics = json.loads(
-            (arguments.run_dir / "test_metrics.json").read_text(encoding="utf-8")
-        )
-        pod_metrics = json.loads(
-            (arguments.run_dir / "pod_metrics.json").read_text(encoding="utf-8")
-        )
-        training = json.loads(
-            (arguments.run_dir / "training_history.json").read_text(encoding="utf-8")
-        )
+        from surrogate_loop.operator.inference import verify_operator_run
+
+        verified = verify_operator_run(arguments.run_dir)
         _print_json(
             {
-                **manifest,
-                "deeponet_metrics": test_metrics,
-                "pod_metrics": pod_metrics,
-                "training": training,
+                **verified.manifest,
+                "deeponet_metrics": verified.test_metrics.to_dict(),
+                "pod_metrics": verified.pod_metrics,
+                "training": verified.training,
             }
         )
         return
@@ -168,10 +159,14 @@ def _handle_operator(arguments: argparse.Namespace) -> None:
         try:
             import numpy as np
 
+            from surrogate_loop.operator.artifacts import REQUIRED_HASHED_FILES
             from surrogate_loop.operator.inference import (
                 load_operator_bundle,
+                load_operator_spec_metadata,
                 predict_field,
                 predict_point,
+                validate_field_grid,
+                validate_prediction_request,
             )
         except ModuleNotFoundError as error:
             if error.name == "torch":
@@ -179,11 +174,20 @@ def _handle_operator(arguments: argparse.Namespace) -> None:
                     "神经算子依赖未安装，请运行 uv sync --extra operator --all-groups"
                 ) from error
             raise
-        bundle = load_operator_bundle(arguments.run_dir)
         point_requested = arguments.x is not None or arguments.t is not None
+        spec = load_operator_spec_metadata(arguments.run_dir)
+        validate_prediction_request(
+            spec,
+            arguments.alpha,
+            arguments.a,
+            arguments.b,
+            x=arguments.x if point_requested else None,
+            t=arguments.t if point_requested else None,
+            nx=arguments.nx,
+            nt=arguments.nt,
+        )
+        bundle = load_operator_bundle(arguments.run_dir)
         if point_requested:
-            if arguments.x is None or arguments.t is None:
-                raise ValueError("点预测必须同时提供 --x 和 --t")
             value = predict_point(
                 bundle,
                 arguments.alpha,
@@ -194,10 +198,9 @@ def _handle_operator(arguments: argparse.Namespace) -> None:
             )
             _print_json({"x": arguments.x, "t": arguments.t, "u": value})
             return
-        nx = arguments.nx or bundle.spec.grid.nx
-        nt = arguments.nt or bundle.spec.grid.nt
-        if nx < 2 or nt < 2:
-            raise ValueError("场预测的 nx 和 nt 必须至少为 2")
+        nx = bundle.spec.grid.nx if arguments.nx is None else arguments.nx
+        nt = bundle.spec.grid.nt if arguments.nt is None else arguments.nt
+        validate_field_grid(nx, nt)
         x = np.linspace(0.0, 1.0, nx)
         t = np.linspace(0.0, 1.0, nt)
         field = predict_field(
@@ -209,6 +212,12 @@ def _handle_operator(arguments: argparse.Namespace) -> None:
             t=t,
         )
         output = arguments.output or arguments.run_dir / "predicted_field.npz"
+        protected = {
+            (arguments.run_dir.resolve() / name).resolve()
+            for name in (*REQUIRED_HASHED_FILES, "manifest.json")
+        }
+        if output.resolve() in protected:
+            raise ValueError("输出路径不能覆盖受保护运行产物")
         output.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(output, x=x, t=t, u=field)
         _print_json({"output": str(output.resolve()), "shape": list(field.shape)})

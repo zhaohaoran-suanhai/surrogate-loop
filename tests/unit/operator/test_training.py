@@ -1,9 +1,15 @@
 import numpy as np
+import pytest
 import torch
 
+import surrogate_loop.operator.heat1d.training as training_module
 from surrogate_loop.operator.heat1d.dataset import NormalizationStats
 from surrogate_loop.operator.heat1d.deeponet import build_deeponet
-from surrogate_loop.operator.heat1d.training import predict_dataset, train_deeponet
+from surrogate_loop.operator.heat1d.training import (
+    TrainingFailure,
+    predict_dataset,
+    train_deeponet,
+)
 
 
 def _tiny_training_spec(smoke_operator_spec):
@@ -105,3 +111,59 @@ def test_predict_dataset_restores_physical_field_shape(
 
     assert prediction.shape == validation.fields.shape
     assert np.isfinite(prediction).all()
+
+
+def test_non_finite_loss_preserves_a_diagnostic_checkpoint(
+    smoke_operator_spec, small_heat_split, monkeypatch
+) -> None:
+    spec = _tiny_training_spec(smoke_operator_spec)
+    train = small_heat_split.train.subset(np.arange(8))
+    validation = small_heat_split.validation.subset(np.arange(2))
+    normalization = NormalizationStats.fit(train)
+    monkeypatch.setattr(
+        torch.nn.functional,
+        "mse_loss",
+        lambda prediction, target: torch.tensor(float("nan"), device=prediction.device),
+    )
+
+    with pytest.raises(TrainingFailure) as captured:
+        train_deeponet(
+            spec,
+            _TrainingOnlySplit(train, validation),
+            normalization,
+            torch.device("cpu"),
+        )
+
+    assert captured.value.reason == "non_finite_train_loss"
+    assert captured.value.failure_epoch == 0
+    assert captured.value.state_dict
+    assert all(
+        tensor.device.type == "cpu" for tensor in captured.value.state_dict.values()
+    )
+
+
+def test_oom_preserves_a_diagnostic_checkpoint(
+    smoke_operator_spec, small_heat_split, monkeypatch
+) -> None:
+    spec = _tiny_training_spec(smoke_operator_spec)
+    train = small_heat_split.train.subset(np.arange(8))
+    validation = small_heat_split.validation.subset(np.arange(2))
+    normalization = NormalizationStats.fit(train)
+    monkeypatch.setattr(
+        training_module,
+        "apply_heat_constraints",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            torch.cuda.OutOfMemoryError("injected OOM")
+        ),
+    )
+
+    with pytest.raises(TrainingFailure) as captured:
+        train_deeponet(
+            spec,
+            _TrainingOnlySplit(train, validation),
+            normalization,
+            torch.device("cpu"),
+        )
+
+    assert captured.value.reason == "cuda_oom"
+    assert captured.value.state_dict
