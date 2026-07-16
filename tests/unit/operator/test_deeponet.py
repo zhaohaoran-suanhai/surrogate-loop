@@ -2,7 +2,11 @@ import pytest
 import torch
 
 from surrogate_loop.operator.config import DeepONetSpec
-from surrogate_loop.operator.heat1d.deeponet import DeepONet, build_deeponet
+from surrogate_loop.operator.heat1d.deeponet import (
+    DeepONet,
+    apply_heat_constraints,
+    build_deeponet,
+)
 
 
 def test_deeponet_cartesian_forward_and_gradients() -> None:
@@ -68,3 +72,36 @@ def test_deeponet_forward_and_backward_on_cuda() -> None:
 
     assert torch.isfinite(loss)
     assert all(torch.isfinite(parameter.grad).all() for parameter in model.parameters())
+
+
+def test_heat_constraints_enforce_initial_and_zero_boundary_fields() -> None:
+    raw_normalized = torch.randn(2, 6)
+    parameters = torch.tensor([[0.1, 1.0, 0.2], [0.15, 0.8, -0.3]])
+    coordinates = torch.tensor(
+        [
+            [0.0, 0.0],
+            [0.5, 0.0],
+            [1.0, 0.0],
+            [0.0, 0.7],
+            [0.5, 0.7],
+            [1.0, 0.7],
+        ]
+    )
+    target_mean = 0.25
+    target_std = 0.4
+
+    constrained_normalized = apply_heat_constraints(
+        raw_normalized,
+        parameters,
+        coordinates,
+        target_mean,
+        target_std,
+    )
+    physical = constrained_normalized * target_std + target_mean
+
+    torch.testing.assert_close(physical[:, 0], torch.zeros(2), atol=1e-6, rtol=0.0)
+    torch.testing.assert_close(physical[:, 2], torch.zeros(2), atol=1e-6, rtol=0.0)
+    torch.testing.assert_close(physical[:, 3], torch.zeros(2), atol=1e-6, rtol=0.0)
+    torch.testing.assert_close(physical[:, 5], torch.zeros(2), atol=1e-6, rtol=0.0)
+    expected_center = parameters[:, 1] * torch.sin(torch.tensor(torch.pi / 2))
+    torch.testing.assert_close(physical[:, 1], expected_center, atol=1e-6, rtol=0.0)

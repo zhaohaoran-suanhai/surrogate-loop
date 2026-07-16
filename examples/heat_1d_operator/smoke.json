@@ -24,8 +24,8 @@
   "pod": {"energy_threshold": 0.999, "max_components": 32},
   "model": {"hidden_width": 128, "hidden_layers": 3, "latent_dim": 128},
   "training": {
-    "max_epochs": 150,
-    "patience": 25,
+    "max_epochs": 1500,
+    "patience": 120,
     "case_batch_size": 16,
     "query_batch_size": 256,
     "learning_rate": 0.001,

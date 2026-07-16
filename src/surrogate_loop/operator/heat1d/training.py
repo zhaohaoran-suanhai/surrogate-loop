@@ -11,7 +11,11 @@ from torch import Tensor, nn
 
 from surrogate_loop.operator.config import OperatorRunSpec
 from surrogate_loop.operator.heat1d.dataset import HeatDataset, NormalizationStats
-from surrogate_loop.operator.heat1d.deeponet import DeepONet, build_deeponet
+from surrogate_loop.operator.heat1d.deeponet import (
+    DeepONet,
+    apply_heat_constraints,
+    build_deeponet,
+)
 from surrogate_loop.operator.runtime import seed_everything
 
 
@@ -58,20 +62,24 @@ def train_deeponet(
         patience=max(1, spec.training.patience // 3),
         min_lr=spec.training.min_learning_rate,
     )
-    train_parameters = normalization.normalize_parameters(split.train.parameters).astype(
+    train_physical_parameters = split.train.parameters.astype(np.float32)
+    train_physical_coordinates = _coordinate_grid(split.train).astype(np.float32)
+    train_parameters = normalization.normalize_parameters(train_physical_parameters).astype(
         np.float32
     )
-    train_coordinates = normalization.normalize_coordinates(
-        _coordinate_grid(split.train)
-    ).astype(np.float32)
+    train_coordinates = normalization.normalize_coordinates(train_physical_coordinates).astype(
+        np.float32
+    )
     train_targets = normalization.normalize_targets(split.train.fields).reshape(
         split.train.fields.shape[0], -1
     ).astype(np.float32)
+    validation_physical_parameters = split.validation.parameters.astype(np.float32)
+    validation_physical_coordinates = _coordinate_grid(split.validation).astype(np.float32)
     validation_parameters = normalization.normalize_parameters(
-        split.validation.parameters
+        validation_physical_parameters
     ).astype(np.float32)
     validation_coordinates = normalization.normalize_coordinates(
-        _coordinate_grid(split.validation)
+        validation_physical_coordinates
     ).astype(np.float32)
     validation_targets = normalization.normalize_targets(split.validation.fields).reshape(
         split.validation.fields.shape[0], -1
@@ -96,11 +104,23 @@ def train_deeponet(
             )
             branch = torch.as_tensor(train_parameters[case_indices], device=device)
             trunk = torch.as_tensor(train_coordinates[query_indices], device=device)
+            physical_branch = torch.as_tensor(
+                train_physical_parameters[case_indices], device=device
+            )
+            physical_trunk = torch.as_tensor(
+                train_physical_coordinates[query_indices], device=device
+            )
             target = torch.as_tensor(
                 train_targets[case_indices][:, query_indices], device=device
             )
             optimizer.zero_grad(set_to_none=True)
-            prediction = model(branch, trunk)
+            prediction = apply_heat_constraints(
+                model(branch, trunk),
+                physical_branch,
+                physical_trunk,
+                normalization.target_mean,
+                normalization.target_std,
+            )
             loss = nn.functional.mse_loss(prediction, target)
             if not torch.isfinite(loss):
                 raise FloatingPointError("DeepONet 训练损失出现 NaN 或 Inf")
@@ -112,6 +132,9 @@ def train_deeponet(
             model,
             validation_parameters,
             validation_coordinates,
+            validation_physical_parameters,
+            validation_physical_coordinates,
+            normalization,
             device,
             spec.training.query_batch_size,
         )
@@ -171,16 +194,21 @@ def predict_dataset(
     device: torch.device,
     query_batch_size: int,
 ) -> NDArray[np.float64]:
-    normalized_parameters = normalization.normalize_parameters(dataset.parameters).astype(
+    physical_parameters = dataset.parameters.astype(np.float32)
+    physical_coordinates = _coordinate_grid(dataset).astype(np.float32)
+    normalized_parameters = normalization.normalize_parameters(physical_parameters).astype(
         np.float32
     )
     normalized_coordinates = normalization.normalize_coordinates(
-        _coordinate_grid(dataset)
+        physical_coordinates
     ).astype(np.float32)
     normalized_prediction = _predict_normalized(
         model,
         normalized_parameters,
         normalized_coordinates,
+        physical_parameters,
+        physical_coordinates,
+        normalization,
         device,
         query_batch_size,
     )
@@ -192,6 +220,9 @@ def _predict_normalized(
     model: DeepONet,
     parameters: NDArray[np.float32],
     coordinates: NDArray[np.float32],
+    physical_parameters: NDArray[np.float32],
+    physical_coordinates: NDArray[np.float32],
+    normalization: NormalizationStats,
     device: torch.device,
     query_batch_size: int,
 ) -> NDArray[np.float32]:
@@ -199,11 +230,21 @@ def _predict_normalized(
         raise ValueError("query_batch_size 必须为正数")
     model.eval()
     branch = torch.as_tensor(parameters, device=device)
+    physical_branch = torch.as_tensor(physical_parameters, device=device)
     batches: list[NDArray[np.float32]] = []
     with torch.no_grad():
         for start in range(0, coordinates.shape[0], query_batch_size):
             trunk = torch.as_tensor(coordinates[start : start + query_batch_size], device=device)
-            prediction = model(branch, trunk)
+            physical_trunk = torch.as_tensor(
+                physical_coordinates[start : start + query_batch_size], device=device
+            )
+            prediction = apply_heat_constraints(
+                model(branch, trunk),
+                physical_branch,
+                physical_trunk,
+                normalization.target_mean,
+                normalization.target_std,
+            )
             batches.append(prediction.cpu().numpy())
     return np.concatenate(batches, axis=1)
 

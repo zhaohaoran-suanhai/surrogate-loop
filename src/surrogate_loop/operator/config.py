@@ -166,8 +166,8 @@ class OperatorRunSpec(StrictModel):
             limits = (64, 16, 16)
             if any(actual > limit for actual, limit in zip(cases, limits, strict=True)):
                 raise ValueError(f"smoke 工况数不能超过 {limits}")
-            if self.training.max_epochs > 150 or self.training.max_minutes > 10:
-                raise ValueError("smoke 训练预算不能超过 150 epoch 和 10 分钟")
+            if self.training.max_epochs > 1500 or self.training.max_minutes > 10:
+                raise ValueError("smoke 训练预算不能超过 1500 epoch 和 10 分钟")
         if self.training.case_batch_size > self.sampling.train_cases:
             raise ValueError("case_batch_size 不能超过训练工况数")
         if self.training.query_batch_size > self.grid.nx * self.grid.nt:

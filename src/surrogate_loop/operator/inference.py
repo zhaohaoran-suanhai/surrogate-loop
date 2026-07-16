@@ -13,7 +13,11 @@ from numpy.typing import NDArray
 from surrogate_loop.operator.artifacts import sha256_file
 from surrogate_loop.operator.config import OperatorRunSpec
 from surrogate_loop.operator.heat1d.dataset import NormalizationStats
-from surrogate_loop.operator.heat1d.deeponet import DeepONet, build_deeponet
+from surrogate_loop.operator.heat1d.deeponet import (
+    DeepONet,
+    apply_heat_constraints,
+    build_deeponet,
+)
 from surrogate_loop.operator.runtime import resolve_device
 
 
@@ -102,13 +106,25 @@ def predict_field(
         np.float32
     )
     branch = torch.as_tensor(normalized_parameters, device=bundle.device)
+    physical_branch = torch.as_tensor(parameters.astype(np.float32), device=bundle.device)
     predictions: list[np.ndarray] = []
     with torch.no_grad():
         for start in range(0, normalized_coordinates.shape[0], 4096):
             trunk = torch.as_tensor(
                 normalized_coordinates[start : start + 4096], device=bundle.device
             )
-            predictions.append(bundle.model(branch, trunk).cpu().numpy())
+            physical_trunk = torch.as_tensor(
+                coordinates[start : start + 4096].astype(np.float32),
+                device=bundle.device,
+            )
+            constrained = apply_heat_constraints(
+                bundle.model(branch, trunk),
+                physical_branch,
+                physical_trunk,
+                bundle.normalization.target_mean,
+                bundle.normalization.target_std,
+            )
+            predictions.append(constrained.cpu().numpy())
     normalized_field = np.concatenate(predictions, axis=1)
     field = bundle.normalization.denormalize_targets(normalized_field)
     return field.reshape(t.size, x.size)

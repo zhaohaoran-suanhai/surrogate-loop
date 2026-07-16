@@ -17,7 +17,10 @@ def test_canonical_operator_specs_load() -> None:
     assert smoke.problem.template == "heat_1d_operator_v1"
     assert smoke.grid.nx == 65
     assert smoke.sampling.train_cases == 64
+    assert smoke.training.max_epochs == 1500
+    assert smoke.training.patience == 120
     assert full.sampling.train_cases == 512
+    assert full.training.max_epochs == 600
     assert full.runtime.device == "auto"
 
 
@@ -28,6 +31,7 @@ def test_canonical_operator_specs_load() -> None:
         lambda payload: payload["problem"]["alpha"].update({"high": 0.21}),
         lambda payload: payload["grid"].update({"nx": 66}),
         lambda payload: payload["sampling"].update({"train_cases": 65}),
+        lambda payload: payload["training"].update({"max_epochs": 1501}),
         lambda payload: payload["runtime"].update({"dtype": "float64"}),
     ],
 )
