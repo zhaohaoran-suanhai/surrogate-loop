@@ -35,6 +35,7 @@ def test_tiny_case_is_finite_clamped_and_balanced() -> None:
     assert case.solve_seconds > 0.0
     assert case.observed_peak_rss_mb > 0.0
     assert np.isfinite(case.stress_summary["von_mises_max"])
+    assert case.solution.function_space.element.basix_element.degree == 2
 
     coordinates = observation_coordinates(17, 5)
     values = interpolate_displacement(case.solution, coordinates)

@@ -31,7 +31,12 @@ from solvers.fenicsx.elasticity2d.solve import SolvedCase, solve_case
 
 JOB_PROTOCOL = "elasticity-job-v1"
 FIELD_PROTOCOL = "elasticity-field-v1"
-_SAMPLE_ID = re.compile(r"^(train|validation|test)-[0-9]{6}$")
+_ROLES = frozenset(
+    {"train", "validation", "development_test", "sealed_test", "calibration"}
+)
+_SAMPLE_ID = re.compile(
+    r"^(train|validation|development_test|sealed_test|calibration)-[0-9]{5}-[0-9a-f]{12}$"
+)
 
 
 @dataclass(frozen=True)
@@ -81,7 +86,9 @@ class _QualityThresholds:
 @dataclass(frozen=True)
 class _Sample:
     sample_id: str
-    role: Literal["train", "validation", "test"]
+    role: Literal[
+        "train", "validation", "development_test", "sealed_test", "calibration"
+    ]
     parameters: np.ndarray
 
 
@@ -138,11 +145,19 @@ def generate_datasets(job_path: Path, output_dir: Path) -> DatasetManifest:
 
     field_array = np.stack(fields).astype(np.float64, copy=False)
     development_indices = np.array(
-        [index for index, sample in enumerate(job.samples) if sample.role != "test"],
+        [
+            index
+            for index, sample in enumerate(job.samples)
+            if sample.role in {"train", "validation"}
+        ],
         dtype=np.int64,
     )
     test_indices = np.array(
-        [index for index, sample in enumerate(job.samples) if sample.role == "test"],
+        [
+            index
+            for index, sample in enumerate(job.samples)
+            if sample.role in {"development_test", "sealed_test"}
+        ],
         dtype=np.int64,
     )
     if development_indices.size == 0 or test_indices.size == 0:
@@ -179,7 +194,7 @@ def generate_datasets(job_path: Path, output_dir: Path) -> DatasetManifest:
             **asdict(job.solver),
             "mesh_shape": list(job.solver.mesh_shape),
             "observation_shape": list(job.solver.observation_shape),
-            "element": "Lagrange-P1-triangle",
+            "element": "Lagrange-P2-triangle",
         },
         "coordinates": coordinates.tolist(),
         "samples": records,
@@ -397,7 +412,7 @@ def _load_job(path: Path) -> _Job:
             raise ValueError("样本标识格式无效")
         if sample_id in identities:
             raise ValueError("样本标识重复")
-        if role not in {"train", "validation", "test"} or not sample_id.startswith(f"{role}-"):
+        if role not in _ROLES or not sample_id.startswith(f"{role}-"):
             raise ValueError("样本角色与标识不一致")
         parameters = np.asarray(item["parameters"], dtype=np.float64)
         if parameters.shape != (6,) or not np.isfinite(parameters).all():

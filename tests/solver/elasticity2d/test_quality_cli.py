@@ -36,18 +36,18 @@ def _write_tiny_job(path: Path) -> Path:
         },
         "samples": [
             {
-                "sample_id": "train-000000",
+                "sample_id": "train-00000-aaaaaaaaaaaa",
                 "role": "train",
                 "parameters": [2.0, 0.30, 0.004, -1.5707963267948966, 0.5, 0.12],
             },
             {
-                "sample_id": "validation-000000",
+                "sample_id": "validation-00001-bbbbbbbbbbbb",
                 "role": "validation",
                 "parameters": [3.0, 0.25, 0.005, 0.0, 0.4, 0.10],
             },
             {
-                "sample_id": "test-000000",
-                "role": "test",
+                "sample_id": "development_test-00002-cccccccccccc",
+                "role": "development_test",
                 "parameters": [4.0, 0.35, 0.006, 1.5707963267948966, 0.6, 0.15],
             },
         ],
@@ -78,11 +78,16 @@ def test_generate_writes_physically_separate_datasets(tmp_path: Path) -> None:
     assert manifest.development_sha256 != manifest.sealed_test_sha256
 
     with np.load(development, allow_pickle=False) as arrays:
-        assert arrays["sample_ids"].tolist() == ["train-000000", "validation-000000"]
+        assert arrays["sample_ids"].tolist() == [
+            "train-00000-aaaaaaaaaaaa",
+            "validation-00001-bbbbbbbbbbbb",
+        ]
         assert arrays["fields"].shape == (2, 27, 2)
         assert arrays["coordinates"].shape == (27, 2)
     with np.load(sealed, allow_pickle=False) as arrays:
-        assert arrays["sample_ids"].tolist() == ["test-000000"]
+        assert arrays["sample_ids"].tolist() == [
+            "development_test-00002-cccccccccccc"
+        ]
         assert arrays["fields"].shape == (1, 27, 2)
 
 

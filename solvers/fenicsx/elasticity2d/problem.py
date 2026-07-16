@@ -13,6 +13,7 @@ LENGTH = 4.0
 HEIGHT = 1.0
 LEFT_TAG = 1
 RIGHT_TAG = 2
+ELEMENT_DEGREE = 2
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,9 @@ def build_elasticity_problem(
         [nx, ny],
         cell_type=mesh.CellType.triangle,
     )
-    function_space = fem.functionspace(domain, ("Lagrange", 1, (2,)))
+    function_space = fem.functionspace(
+        domain, ("Lagrange", ELEMENT_DEGREE, (2,))
+    )
 
     facet_dim = domain.topology.dim - 1
     left_facets = mesh.locate_entities_boundary(
