@@ -11,6 +11,9 @@ def test_agent_documentation_entrypoints_exist() -> None:
     expected = (
         "docs/README.md",
         "docs/当前能力与状态.md",
+        "docs/guides/Agent协作指南.md",
+        "docs/demos/README.md",
+        "docs/demos/二维线弹性演示手册.md",
     )
     assert [path for path in expected if not (ROOT / path).is_file()] == []
 
@@ -71,3 +74,45 @@ def test_root_readme_links_agent_entries() -> None:
     content = _read("README.md")
     assert "docs/README.md" in content
     assert "docs/guides/Agent协作指南.md" in content
+
+
+def test_elasticity_demo_has_two_modes_formulas_and_six_stages() -> None:
+    content = _read("docs/demos/二维线弹性演示手册.md")
+    for required in (
+        "快速展示模式",
+        "从头运行模式",
+        "-\\nabla\\cdot\\boldsymbol{\\sigma}",
+        "\\mathcal G",
+        "\\frac{P}{E}\\frac{x}{L}",
+        "进度：3/6",
+        "Smoke",
+        "development_complete",
+        "加速比",
+    ):
+        assert required in content
+    assert "二维线弹性当前未完成 Full" in content
+
+
+def test_demo_commands_match_current_elasticity_cli() -> None:
+    content = _read("docs/demos/二维线弹性演示手册.md")
+    commands = (
+        "uv run surrogate-loop elasticity2d doctor",
+        "uv run surrogate-loop elasticity2d validate --config "
+        "examples/elasticity_2d_cantilever/smoke.json",
+        "uv run surrogate-loop elasticity2d run --config "
+        "examples/elasticity_2d_cantilever/smoke.json --runs-dir runs",
+        "uv run surrogate-loop elasticity2d report --run-dir",
+    )
+    assert all(command in content for command in commands)
+
+
+def test_demo_index_selects_elasticity_as_main_story() -> None:
+    content = _read("docs/demos/README.md")
+    assert "二维线弹性" in content
+    assert "主线" in content
+    assert "一维热传导" in content
+    assert "标量 ODE" in content
+
+
+def test_root_readme_links_elasticity_demo() -> None:
+    assert "docs/demos/二维线弹性演示手册.md" in _read("README.md")
