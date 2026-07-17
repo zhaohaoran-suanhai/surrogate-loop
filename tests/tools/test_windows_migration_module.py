@@ -88,6 +88,30 @@ def test_fixed_command_preserves_argument_boundaries(powershell_executable: str)
     assert json.loads(process["stdout"]) == arguments[2:]
 
 
+def test_fixed_command_sets_utf8_environment_when_parent_keys_are_absent(
+    powershell_executable: str,
+) -> None:
+    arguments = [
+        "-c",
+        "import json,os; print(json.dumps([os.environ.get('PYTHONUTF8'), "
+        "os.environ.get('PYTHONIOENCODING')]))",
+    ]
+    completed = run_powershell(
+        "$env:PYTHONUTF8=$null;$env:PYTHONIOENCODING=$null;"
+        f"Import-Module {ps_quote(MODULE)} -Force;"
+        "$result=Invoke-FixedCommand "
+        f"-FilePath {ps_quote(sys.executable)} "
+        f"-Arguments @({','.join(ps_quote(argument) for argument in arguments)}) "
+        f"-WorkingDirectory {ps_quote(ROOT)};"
+        "$result | ConvertTo-Json -Depth 10 -Compress",
+        executable=powershell_executable,
+    )
+    assert completed.returncode == 0, completed.stderr
+    process = json.loads(completed.stdout)
+    assert process["exit_code"] == 0
+    assert json.loads(process["stdout"]) == ["1", "utf-8"]
+
+
 def test_json_migration_output_writes_one_compact_object(powershell_executable: str) -> None:
     completed = run_powershell(
         f"Import-Module {ps_quote(MODULE)} -Force;"

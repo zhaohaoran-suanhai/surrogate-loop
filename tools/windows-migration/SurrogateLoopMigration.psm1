@@ -109,13 +109,34 @@ function Invoke-FixedCommand {
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     $startInfo.StandardOutputEncoding = $utf8
     $startInfo.StandardErrorEncoding = $utf8
-    $startInfo.EnvironmentVariables['PYTHONUTF8'] = '1'
-    $startInfo.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    if (-not $process.Start()) {
+    $hadPythonUtf8 = Test-Path -LiteralPath 'Env:PYTHONUTF8'
+    $previousPythonUtf8 = $env:PYTHONUTF8
+    $hadPythonIoEncoding = Test-Path -LiteralPath 'Env:PYTHONIOENCODING'
+    $previousPythonIoEncoding = $env:PYTHONIOENCODING
+    try {
+        $env:PYTHONUTF8 = '1'
+        $env:PYTHONIOENCODING = 'utf-8'
+        $started = $process.Start()
+    }
+    finally {
+        if ($hadPythonUtf8) {
+            $env:PYTHONUTF8 = $previousPythonUtf8
+        }
+        else {
+            Remove-Item -LiteralPath 'Env:PYTHONUTF8'
+        }
+        if ($hadPythonIoEncoding) {
+            $env:PYTHONIOENCODING = $previousPythonIoEncoding
+        }
+        else {
+            Remove-Item -LiteralPath 'Env:PYTHONIOENCODING'
+        }
+    }
+    if (-not $started) {
         throw "无法启动固定命令：$FilePath"
     }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
