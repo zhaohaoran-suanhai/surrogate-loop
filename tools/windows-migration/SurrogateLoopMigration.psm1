@@ -881,6 +881,382 @@ function New-RunBundleArchive {
     }
 }
 
+function Test-ExactJsonProperties {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$InputObject,
+        [Parameter(Mandatory)][string[]]$Expected,
+        [Parameter(Mandatory)][string]$Context
+    )
+
+    $actual = @($InputObject.PSObject.Properties | ForEach-Object { $_.Name })
+    $expectedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $actualSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($name in $Expected) { [void]$expectedSet.Add($name) }
+    foreach ($name in $actual) { [void]$actualSet.Add([string]$name) }
+    if ($actual.Count -ne $Expected.Count) {
+        throw "$Context 字段集合不精确。"
+    }
+    foreach ($name in $Expected) {
+        if (-not $actualSet.Contains($name)) {
+            throw "$Context 缺少字段：$name"
+        }
+    }
+    foreach ($name in $actual) {
+        if (-not $expectedSet.Contains([string]$name)) {
+            throw "$Context 包含未知字段：$name"
+        }
+    }
+}
+
+function Remove-OwnedStagingDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$RunsDirectory
+    )
+
+    $resolved = (Resolve-Path -LiteralPath $Path).Path
+    $resolvedRuns = (Resolve-Path -LiteralPath $RunsDirectory).Path
+    $parent = Split-Path -Parent $resolved
+    $name = Split-Path -Leaf $resolved
+    if (-not [string]::Equals($parent, $resolvedRuns, [StringComparison]::OrdinalIgnoreCase)) {
+        throw (New-MigrationException -Message '拒绝清理 runs 目录直接子项以外的路径。' -ExitCode 4)
+    }
+    if ($name -notmatch '^\.migration-staging-[0-9a-f-]+$') {
+        throw (New-MigrationException -Message '拒绝清理不属于迁移工具的 staging 路径。' -ExitCode 4)
+    }
+    $item = Get-Item -LiteralPath $resolved
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw (New-MigrationException -Message '拒绝清理重解析点 staging。' -ExitCode 4)
+    }
+    Remove-Item -LiteralPath $resolved -Recurse -Force -WhatIf:$false -Confirm:$false
+}
+
+function Expand-VerifiedRunBundle {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ArchivePath,
+        [Parameter(Mandatory)][string]$ChecksumPath,
+        [Parameter(Mandatory)][string]$RunsDirectory,
+        [Parameter(Mandatory)][string]$TargetRepositoryRoot
+    )
+
+    $stagingRoot = $null
+    $resolvedRuns = $null
+    try {
+        foreach ($path in @($ArchivePath, $ChecksumPath)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "迁移文件不存在或不是普通文件：$path"
+            }
+            if (((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "迁移文件不能是重解析点：$path"
+            }
+        }
+        $resolvedArchive = (Resolve-Path -LiteralPath $ArchivePath).Path
+        $resolvedChecksum = (Resolve-Path -LiteralPath $ChecksumPath).Path
+        $resolvedRuns = (Resolve-Path -LiteralPath $RunsDirectory).Path
+        if (-not (Test-Path -LiteralPath $resolvedRuns -PathType Container)) {
+            throw "runs 目录不存在：$RunsDirectory"
+        }
+        if (((Get-Item -LiteralPath $resolvedRuns).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "runs 目录不能是重解析点：$resolvedRuns"
+        }
+
+        try {
+            $sidecar = Get-Content -LiteralPath $resolvedChecksum -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            throw "checksum sidecar 不是合法 JSON：$($_.Exception.Message)"
+        }
+        Test-ExactJsonProperties -InputObject $sidecar -Expected @(
+            'schema_version', 'archive_name', 'archive_bytes', 'archive_sha256'
+        ) -Context 'checksum sidecar'
+        if ([int]$sidecar.schema_version -ne 1) {
+            throw 'checksum sidecar schema_version 必须为 1。'
+        }
+        $archiveItem = Get-Item -LiteralPath $resolvedArchive
+        if ([string]$sidecar.archive_name -cne $archiveItem.Name) {
+            throw 'checksum sidecar archive_name 与 ZIP 不一致。'
+        }
+        $archiveHash = (Get-FileHash -LiteralPath $resolvedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if (-not [string]::Equals(
+            [string]$sidecar.archive_sha256,
+            $archiveHash,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw 'ZIP SHA-256 与 checksum sidecar 不一致。'
+        }
+        if ([int64]$sidecar.archive_bytes -ne [int64]$archiveItem.Length) {
+            throw 'checksum sidecar archive_bytes 与 ZIP 不一致。'
+        }
+
+        Test-SafeZipEntries -ArchivePath $resolvedArchive -DestinationRoot $resolvedRuns
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($resolvedArchive)
+        try {
+            $entries = @($archive.Entries)
+            $bundleEntries = @($entries | Where-Object {
+                ([string]$_.FullName).Replace('\', '/') -ceq 'bundle.json'
+            })
+            if ($bundleEntries.Count -ne 1) {
+                throw 'ZIP 必须恰好包含一个 bundle.json。'
+            }
+
+            $runIds = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+            foreach ($entry in $entries) {
+                $rawName = [string]$entry.FullName
+                $name = $rawName.Replace('\', '/')
+                $trimmed = $name.TrimEnd('/')
+                $segments = @($trimmed -split '/')
+                if ($segments -contains '.' -or $segments -contains '') {
+                    throw "ZIP 条目不是规范路径：$name"
+                }
+                if ($name -ceq 'bundle.json') {
+                    continue
+                }
+                if ($segments.Count -lt 2 -or $segments[0] -cne 'run') {
+                    throw "ZIP 只能包含 bundle.json 和单一 run/<run_id>/ 树：$name"
+                }
+                [void]$runIds.Add([string]$segments[1])
+            }
+            if ($runIds.Count -ne 1) {
+                throw 'ZIP 必须恰好包含单一 run/<run_id>/ 树。'
+            }
+            $zipRunId = @($runIds)[0]
+
+            $bundleStream = $bundleEntries[0].Open()
+            try {
+                $reader = New-Object IO.StreamReader(
+                    $bundleStream,
+                    (New-Object Text.UTF8Encoding($false, $true)),
+                    $true
+                )
+                try {
+                    $bundleJson = $reader.ReadToEnd()
+                }
+                finally {
+                    $reader.Dispose()
+                }
+            }
+            finally {
+                $bundleStream.Dispose()
+            }
+            try {
+                $bundle = $bundleJson | ConvertFrom-Json
+            }
+            catch {
+                throw "bundle.json 不是合法 JSON：$($_.Exception.Message)"
+            }
+            Test-ExactJsonProperties -InputObject $bundle -Expected @(
+                'schema_version', 'model_kind', 'run_id', 'export_repo_commit',
+                'export_repo_dirty', 'created_at_utc', 'files'
+            ) -Context 'bundle.json'
+            if ([int]$bundle.schema_version -ne 1) {
+                throw 'bundle.json schema_version 必须为 1。'
+            }
+            if (@('scalar', 'heat1d', 'elasticity2d') -cnotcontains [string]$bundle.model_kind) {
+                throw "bundle.json model_kind 不受支持：$($bundle.model_kind)"
+            }
+            $runId = [string]$bundle.run_id
+            if ($runId -notmatch '^[A-Za-z0-9._-]+$' -or $runId -cne $zipRunId) {
+                throw 'bundle.json run_id 无效或与 ZIP 树不一致。'
+            }
+            if ([string]$bundle.export_repo_commit -notmatch '^[0-9a-fA-F]{40,64}$') {
+                throw 'bundle.json export_repo_commit 不是合法 Git 提交摘要。'
+            }
+            if ($bundle.export_repo_dirty -isnot [bool]) {
+                throw 'bundle.json export_repo_dirty 必须是布尔值。'
+            }
+            $null = [DateTime]::Parse(
+                [string]$bundle.created_at_utc,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind
+            )
+
+            $expectedZipFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            $previousPath = $null
+            foreach ($file in @($bundle.files)) {
+                Test-ExactJsonProperties -InputObject $file -Expected @(
+                    'path', 'bytes', 'sha256'
+                ) -Context 'bundle file'
+                $relative = [string]$file.path
+                $segments = @($relative -split '/')
+                if ([string]::IsNullOrWhiteSpace($relative) -or $relative.Contains('\') -or
+                    [IO.Path]::IsPathRooted($relative) -or $relative.Contains(':') -or
+                    $segments -contains '..' -or $segments -contains '.' -or $segments -contains '') {
+                    throw "bundle file path 无效：$relative"
+                }
+                if ([int64]$file.bytes -lt 0 -or [string]$file.sha256 -notmatch '^[0-9a-f]{64}$') {
+                    throw "bundle file 元数据无效：$relative"
+                }
+                if ($null -ne $previousPath -and
+                    [StringComparer]::Ordinal.Compare($previousPath, $relative) -ge 0) {
+                    throw 'bundle files 必须按 Ordinal 严格排序且不能重复。'
+                }
+                $previousPath = $relative
+                if (-not $expectedZipFiles.Add("run/$runId/$relative")) {
+                    throw "bundle files 包含 Windows 路径别名冲突：$relative"
+                }
+            }
+
+            $actualZipFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            foreach ($entry in $entries) {
+                $name = ([string]$entry.FullName).Replace('\', '/')
+                if ($name -ceq 'bundle.json' -or [string]::IsNullOrEmpty([string]$entry.Name)) {
+                    continue
+                }
+                if (-not $actualZipFiles.Add($name)) {
+                    throw "ZIP 包含重复普通文件：$name"
+                }
+                if (-not $expectedZipFiles.Contains($name)) {
+                    throw "ZIP 包含清单外普通文件：$name"
+                }
+            }
+            if ($actualZipFiles.Count -ne $expectedZipFiles.Count) {
+                throw 'ZIP 普通文件集合与 bundle files 清单不一致。'
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+
+        $targetRunDir = Join-Path $resolvedRuns $runId
+        if (Test-Path -LiteralPath $targetRunDir) {
+            throw (New-MigrationException -Message "目标运行已存在：$targetRunDir" -ExitCode 5)
+        }
+        $stagingRoot = Join-Path $resolvedRuns `
+            ('.migration-staging-' + [guid]::NewGuid().ToString('N'))
+        $stagingRun = Join-Path $stagingRoot $runId
+        $null = New-Item -ItemType Directory -Path $stagingRun
+
+        $archive = [IO.Compression.ZipFile]::OpenRead($resolvedArchive)
+        try {
+            $runPrefix = "run/$runId/"
+            $stagingPrefix = $stagingRun.TrimEnd('\') + '\'
+            foreach ($entry in $archive.Entries) {
+                $name = ([string]$entry.FullName).Replace('\', '/')
+                if ($name -ceq 'bundle.json' -or [string]::IsNullOrEmpty([string]$entry.Name)) {
+                    continue
+                }
+                $relative = $name.Substring($runPrefix.Length).Replace('/', '\')
+                $destination = [IO.Path]::GetFullPath((Join-Path $stagingRun $relative))
+                if (-not $destination.StartsWith($stagingPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw "ZIP 解包路径离开 staging：$name"
+                }
+                $parent = Split-Path -Parent $destination
+                if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+                    $null = New-Item -ItemType Directory -Path $parent
+                }
+                $inputStream = $entry.Open()
+                try {
+                    $outputStream = [IO.File]::Open(
+                        $destination,
+                        [IO.FileMode]::CreateNew,
+                        [IO.FileAccess]::Write,
+                        [IO.FileShare]::None
+                    )
+                    try {
+                        $inputStream.CopyTo($outputStream)
+                    }
+                    finally {
+                        $outputStream.Dispose()
+                    }
+                }
+                finally {
+                    $inputStream.Dispose()
+                }
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+        Test-FileManifest -Root $stagingRun -Files $bundle.files
+
+        $resolvedTargetRepository = (Resolve-Path -LiteralPath $TargetRepositoryRoot).Path
+        $gitPath = Get-ApplicationPath -Names @('git.exe', 'git')
+        if ($null -eq $gitPath) {
+            throw '未找到 Git，无法比较目标提交。'
+        }
+        $targetCommitResult = Invoke-FixedCommand -FilePath $gitPath `
+            -Arguments @('-C', $resolvedTargetRepository, 'rev-parse', 'HEAD') `
+            -WorkingDirectory $resolvedTargetRepository
+        if ($targetCommitResult.exit_code -ne 0) {
+            throw "读取目标 Git 提交失败：$($targetCommitResult.stderr)"
+        }
+        $targetCommit = $targetCommitResult.stdout.Trim()
+        $warnings = New-Object 'System.Collections.Generic.List[string]'
+        if (-not [string]::Equals(
+            [string]$bundle.export_repo_commit,
+            $targetCommit,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            [void]$warnings.Add(
+                "导出提交 $($bundle.export_repo_commit) 与目标提交 $targetCommit 不同；仍须完成 accepted 验证。"
+            )
+        }
+        if ([bool]$bundle.export_repo_dirty) {
+            [void]$warnings.Add('导出仓库存在未提交修改；SHA-256 只证明 bundle 内容一致性。')
+        }
+
+        [pscustomobject][ordered]@{
+            bundle = $bundle
+            staging_root = $stagingRoot
+            run_dir = $stagingRun
+            target_run_dir = $targetRunDir
+            commit_warning = if ($warnings.Count -eq 0) { $null } else { $warnings -join ' ' }
+        }
+    }
+    catch {
+        if ($null -ne $stagingRoot -and $null -ne $resolvedRuns -and
+            (Test-Path -LiteralPath $stagingRoot)) {
+            try {
+                Remove-OwnedStagingDirectory -Path $stagingRoot -RunsDirectory $resolvedRuns
+            }
+            catch {
+                # 保留原始完整性异常；清理边界由所有权函数保护。
+            }
+        }
+        if ($null -eq $_.Exception.Data['MigrationExitCode']) {
+            $_.Exception.Data['MigrationExitCode'] = 4
+        }
+        throw
+    }
+}
+
+function Publish-ImportedRun {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$ExpandedBundle)
+
+    $stagingRoot = (Resolve-Path -LiteralPath $ExpandedBundle.staging_root).Path
+    $runDir = (Resolve-Path -LiteralPath $ExpandedBundle.run_dir).Path
+    $runsDirectory = Split-Path -Parent $stagingRoot
+    $targetRunDir = [IO.Path]::GetFullPath([string]$ExpandedBundle.target_run_dir)
+    $runId = [string]$ExpandedBundle.bundle.run_id
+    if ((Split-Path -Leaf $stagingRoot) -notmatch '^\.migration-staging-[0-9a-f-]+$' -or
+        -not [string]::Equals(
+            (Split-Path -Parent $runDir),
+            $stagingRoot,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not [string]::Equals(
+            (Split-Path -Parent $targetRunDir),
+            $runsDirectory,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        (Split-Path -Leaf $targetRunDir) -cne $runId) {
+        throw (New-MigrationException -Message '导入发布路径不满足 staging/runs 边界。' -ExitCode 4)
+    }
+    if (Test-Path -LiteralPath $targetRunDir) {
+        throw (New-MigrationException -Message "目标运行已存在：$targetRunDir" -ExitCode 5)
+    }
+    [IO.Directory]::Move($runDir, $targetRunDir)
+    [pscustomobject][ordered]@{
+        run_id = $runId
+        run_dir = $targetRunDir
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-SurrogateRepositoryRoot',
     'New-MigrationResult',
@@ -896,5 +1272,8 @@ Export-ModuleMember -Function @(
     'Get-ModelVerificationPlan',
     'Invoke-ModelVerification',
     'Get-InstallationPlan',
-    'New-RunBundleArchive'
+    'New-RunBundleArchive',
+    'Expand-VerifiedRunBundle',
+    'Publish-ImportedRun',
+    'Remove-OwnedStagingDirectory'
 )
