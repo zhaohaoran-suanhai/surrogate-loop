@@ -54,13 +54,17 @@ def run_elasticity_pipeline(
     config_path: Path,
     runs_dir: Path,
     request: str,
+    *,
+    reuse_data_from: Path | None = None,
 ) -> ElasticityRunResult:
     if not request.strip():
         raise ValueError("二维弹性运行请求不能为空")
     spec = load_elasticity_spec(config_path)
     if spec.mode == "calibration":
         raise ValueError("calibration 配置必须通过专用校准入口运行")
-    run_dir = _resolve_run_directory(runs_dir, spec, request)
+    if reuse_data_from is not None and spec.mode != "smoke":
+        raise ValueError("只有 Smoke 运行可以复用已有 FEniCSx 数据")
+    run_dir = _resolve_run_directory(runs_dir, spec, request, reuse_data_from)
     resumed = _completed_result(run_dir, spec)
     if resumed is not None:
         return resumed
@@ -71,7 +75,11 @@ def run_elasticity_pipeline(
         sample_plan = build_sample_plan(spec)
         repo_root = Path(__file__).resolve().parents[4]
         dataset_files = generate_or_reuse_dataset(
-            spec, sample_plan, run_dir, repo_root
+            spec,
+            sample_plan,
+            run_dir,
+            repo_root,
+            reuse_data_from=reuse_data_from,
         )
         state = read_run_state(run_dir)
         if state is ElasticityRunState.CREATED:
@@ -149,11 +157,22 @@ def _resolve_run_directory(
     runs_dir: Path,
     spec: ElasticityRunSpec,
     request: str,
+    reuse_data_from: Path | None = None,
 ) -> Path:
     identity = {
         "request": request,
         "spec": spec.model_dump(mode="json"),
     }
+    if reuse_data_from is not None:
+        source = reuse_data_from.resolve()
+        identity.update(
+            {
+                "reuse_data_from": str(source),
+                "reuse_manifest_sha256": sha256_file(
+                    source / "solver_output" / "datasets" / "dataset_manifest.json"
+                ),
+            }
+        )
     canonical = json.dumps(
         identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")

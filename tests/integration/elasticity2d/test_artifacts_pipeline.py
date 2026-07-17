@@ -250,9 +250,10 @@ def test_sealed_tampering_fails_run_without_second_chance(tmp_path, monkeypatch)
 def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypatch) -> None:
     generate_calls = 0
 
-    def fake_generate(spec, sample_plan, run_dir, repo_root):
+    def fake_generate(spec, sample_plan, run_dir, repo_root, *, reuse_data_from=None):
         nonlocal generate_calls
         generate_calls += 1
+        assert reuse_data_from is None
         return _write_protocol_dataset(run_dir, sample_plan)
 
     def fake_train(spec, partitions, normalization, device):

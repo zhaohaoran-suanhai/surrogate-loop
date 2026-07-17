@@ -85,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     elasticity_run.add_argument("--config", type=Path, required=True)
     elasticity_run.add_argument("--runs-dir", type=Path, default=Path("runs"))
     elasticity_run.add_argument("--request", default="通过结构化配置启动二维弹性训练")
+    elasticity_run.add_argument("--reuse-data-from", type=Path)
     elasticity_report = elasticity_commands.add_parser("report", help="读取二维弹性报告")
     elasticity_report.add_argument("--run-dir", type=Path, required=True)
     elasticity_predict = elasticity_commands.add_parser("predict", help="二维弹性点或场预测")
@@ -300,7 +301,10 @@ def _handle_elasticity(arguments: argparse.Namespace) -> None:
         from surrogate_loop.operator.elasticity2d.pipeline import run_elasticity_pipeline
 
         result = run_elasticity_pipeline(
-            arguments.config, arguments.runs_dir, arguments.request
+            arguments.config,
+            arguments.runs_dir,
+            arguments.request,
+            reuse_data_from=arguments.reuse_data_from,
         )
         _print_json(
             {

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,10 +83,22 @@ def generate_or_reuse_dataset(
     sample_plan: SamplePlan,
     run_dir: Path,
     repo_root: Path,
+    *,
+    reuse_data_from: Path | None = None,
 ) -> DatasetFiles:
     if spec.mode == "calibration":
         raise ValueError("校准模式不生成训练数据集")
+    if reuse_data_from is not None and spec.mode != "smoke":
+        raise ValueError("只有 Smoke 运行可以复用已有 FEniCSx 数据")
     job_path = write_solver_job(spec, sample_plan, run_dir)
+    if reuse_data_from is not None:
+        return _reuse_verified_source(
+            spec,
+            sample_plan,
+            job_path,
+            run_dir.resolve(),
+            reuse_data_from.resolve(),
+        )
     output_dir = run_dir.resolve() / "solver_output"
     cache_path = run_dir.resolve() / "solver_dataset_request.json"
     reused = _try_reuse(
@@ -122,6 +136,107 @@ def generate_or_reuse_dataset(
         },
     )
     return files
+
+
+def _reuse_verified_source(
+    spec: ElasticityRunSpec,
+    sample_plan: SamplePlan,
+    job_path: Path,
+    target_run_dir: Path,
+    source_run_dir: Path,
+) -> DatasetFiles:
+    try:
+        status = json.loads((source_run_dir / "status.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("无法读取复用源运行状态") from error
+    if status != {"state": "trained"}:
+        raise RuntimeError("复用源必须是已完成开发评估的 trained Smoke 运行")
+
+    source_request_sha256 = _verify_source_request(source_run_dir)
+    source_manifest = source_run_dir / "solver_output" / "datasets" / "dataset_manifest.json"
+    source_files, _ = _validate_manifest(spec, sample_plan, source_manifest)
+    source_manifest_sha256 = sha256_file(source_manifest)
+    source_quality = source_run_dir / "solver_output" / "diagnostics" / "solver_quality.json"
+
+    target_output = target_run_dir / "solver_output"
+    target_manifest = target_output / "datasets" / "dataset_manifest.json"
+    _copy_verified_file(
+        source_files.development_path,
+        target_output / "datasets" / "development.npz",
+        source_files.development_sha256,
+    )
+    _copy_verified_file(
+        source_files.sealed_test_path,
+        target_output / "datasets" / "sealed_test.npz",
+        source_files.sealed_test_sha256,
+    )
+    _copy_verified_file(
+        source_quality,
+        target_output / "diagnostics" / "solver_quality.json",
+        sha256_file(source_quality),
+    )
+    _copy_verified_file(source_manifest, target_manifest, source_manifest_sha256)
+    files, _ = _validate_manifest(spec, sample_plan, target_manifest)
+    _atomic_json(
+        target_run_dir / "dataset_reuse.json",
+        {
+            "schema_version": 1,
+            "source_run_dir": str(source_run_dir),
+            "source_request_sha256": source_request_sha256,
+            "source_manifest_sha256": source_manifest_sha256,
+            "development_sha256": files.development_sha256,
+            "sealed_test_sha256": files.sealed_test_sha256,
+            "target_job_sha256": sha256_file(job_path),
+        },
+    )
+    return files
+
+
+def _verify_source_request(source_run_dir: Path) -> str:
+    path = source_run_dir / "request.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("无法读取复用源请求身份") from error
+    if not isinstance(payload, dict) or "identity_sha256" not in payload:
+        raise RuntimeError("复用源请求身份字段无效")
+    identity = {name: value for name, value in payload.items() if name != "identity_sha256"}
+    allowed = (
+        {"request", "spec"},
+        {"request", "spec", "reuse_data_from", "reuse_manifest_sha256"},
+    )
+    if set(identity) not in allowed:
+        raise RuntimeError("复用源请求身份字段无效")
+    canonical = json.dumps(
+        identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()
+    source_spec = identity.get("spec")
+    if (
+        payload["identity_sha256"] != digest
+        or not isinstance(source_spec, dict)
+        or source_spec.get("mode") != "smoke"
+    ):
+        raise RuntimeError("复用源请求身份无效或不是 Smoke")
+    return sha256_file(path)
+
+
+def _copy_verified_file(source: Path, target: Path, expected_sha256: str) -> None:
+    if sha256_file(source) != expected_sha256:
+        raise RuntimeError("复用源文件 SHA-256 校验失败")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".reuse.tmp")
+    try:
+        shutil.copyfile(source, temporary)
+        if sha256_file(temporary) != expected_sha256:
+            raise RuntimeError("复用目标文件 SHA-256 校验失败")
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def load_development_partitions(
