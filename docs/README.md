@@ -39,7 +39,7 @@
 ## 稳定文档
 
 - [环境与验证](guides/环境与验证.md)
-- Agent 协作指南：将在 `docs/guides/Agent协作指南.md` 中集中维护
+- [Agent 协作指南](guides/Agent协作指南.md)
 - [标量闭环操作指南](guides/标量闭环操作指南.md)
 - [一维热传导闭环操作指南](guides/一维热传导闭环操作指南.md)
 - [二维线弹性闭环操作指南](guides/二维线弹性闭环操作指南.md)

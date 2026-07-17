@@ -15,6 +15,7 @@ def test_required_repository_paths_exist() -> None:
         "docs/README.md",
         "docs/当前能力与状态.md",
         "docs/architecture/README.md",
+        "docs/guides/Agent协作指南.md",
         "docs/guides/环境与验证.md",
         "src/surrogate_loop/__init__.py",
         "src/surrogate_loop/__main__.py",

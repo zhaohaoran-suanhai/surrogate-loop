@@ -36,7 +36,7 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 
 该闭环使用 Crank–Nicolson 生成数值标签、解析解验证求解器、POD/GPR 建立诊断基线，并用 PyTorch DeepONet 学习参数到完整温度场的算子映射。DeepONet 必须独立通过测试集验收，基线不能替代它。
 
-锁定的 Smoke 与 Full 配置均已在 RTX 4060 Laptop GPU 上完成端到端运行。Smoke 留出集在开发校准中用于诊断，因此只作探索性结果；此前未用于调参的 Full 确认性留出集使用 128 个算例，中位相对 L2 误差为 0.731%，状态为 `accepted`。完整指标和复现说明见操作指南。
+锁定的 Smoke 与 Full 配置均已完成端到端运行。Smoke 只作开发证据；Full 的确认性留出集未参与此前调参，最终状态为 `accepted`，可以通过正常入口执行域内可信推理。当前实测指标和复现说明见状态页与操作指南。
 
 ### 二维线弹性神经算子
 
@@ -46,7 +46,7 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 (E, nu, P, theta, y0, w) -> (u_x(x, y), u_y(x, y))
 ```
 
-已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理。真实微型跨环境测试、本机 16 样本校准和 144 样本 Smoke 均已走通。Smoke 的 DeepONet 中位相对 L2 误差为 1.75%，状态为 `development_complete`；P95 尚未达到 Full 门槛，因此该结果只证明流程可运行，不构成确认性精度验收。当前目标不要求继续调参或启动 Full。
+已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理保护。真实微型跨环境测试、calibration 和 Smoke 均已走通，Smoke 状态为 `development_complete`；它证明流程可运行，但不构成 Full 确认性精度验收。当前未完成二维线弹性 Full。
 
 ## 环境要求
 
@@ -120,6 +120,14 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 - 可复现算例：`examples/`
 - 自动化测试：`tests/`
 - 运行产物：`runs/`
+
+## Agent 接管与演示
+
+- [项目文档地图](docs/README.md)：新对话按演示、运行、诊断或开发新 PDE 选择最短阅读路径。
+- [当前能力与状态](docs/当前能力与状态.md)：查看三个闭环的最高证据、当前指标与功能边界。
+- [Agent 协作指南](docs/guides/Agent协作指南.md)：了解操作前说明、进度播报、完成报告和授权边界。
+
+二维线弹性是当前推荐演示主线。快速展示和从头运行的演示入口将在 `docs/demos/` 中维护；在该入口完成前，可先阅读状态页和[二维线弹性闭环操作指南](docs/guides/二维线弹性闭环操作指南.md)。
 
 ## 文档
 
