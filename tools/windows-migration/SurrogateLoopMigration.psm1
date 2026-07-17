@@ -556,6 +556,169 @@ function Get-EnvironmentPlan {
     )
 }
 
+function Get-ModelVerificationPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('scalar', 'heat1d', 'elasticity2d')]
+        [string]$ModelKind,
+        [Parameter(Mandatory)][string]$RunDir,
+        [string]$UvPath = 'uv',
+        [string]$RepositoryRoot = (Get-SurrogateRepositoryRoot).Path
+    )
+
+    $resolvedRun = (Resolve-Path -LiteralPath $RunDir).Path
+    if (-not (Test-Path -LiteralPath $resolvedRun -PathType Container)) {
+        throw "accepted 运行目录不存在：$RunDir"
+    }
+    if (((Get-Item -LiteralPath $resolvedRun).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "accepted 运行目录不能是重解析点：$resolvedRun"
+    }
+    $root = [IO.Path]::GetFullPath($RepositoryRoot)
+
+    switch ($ModelKind) {
+        'scalar' {
+            $report = @('run', 'surrogate-loop', 'report', '--run-dir', $resolvedRun)
+            $predict = @(
+                'run', 'surrogate-loop', 'predict', '--run-dir', $resolvedRun,
+                '--gamma', '0.35'
+            )
+        }
+        'heat1d' {
+            $report = @('run', 'surrogate-loop', 'operator', 'report', '--run-dir', $resolvedRun)
+            $predict = @(
+                'run', 'surrogate-loop', 'operator', 'predict', '--run-dir', $resolvedRun,
+                '--alpha', '0.1', '--a', '1.0', '--b', '0.1', '--x', '0.5', '--t', '0.25'
+            )
+        }
+        'elasticity2d' {
+            $report = @('run', 'surrogate-loop', 'elasticity2d', 'report', '--run-dir', $resolvedRun)
+            $predict = @(
+                'run', 'surrogate-loop', 'elasticity2d', 'predict', '--run-dir', $resolvedRun,
+                '--e', '3', '--nu', '0.3', '--p', '0.006', '--theta', '-1.5707963268',
+                '--y0', '0.5', '--w', '0.12', '--x', '4', '--y', '0.5'
+            )
+        }
+    }
+
+    @(
+        New-CommandSpec 'model-report' $UvPath $report $root
+        New-CommandSpec 'model-predict' $UvPath $predict $root
+    )
+}
+
+function Invoke-ModelVerification {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('scalar', 'heat1d', 'elasticity2d')]
+        [string]$ModelKind,
+        [Parameter(Mandatory)][string]$RunDir,
+        [string]$UvPath = 'uv',
+        [string]$RepositoryRoot = (Get-SurrogateRepositoryRoot).Path
+    )
+
+    $plan = @(Get-ModelVerificationPlan -ModelKind $ModelKind -RunDir $RunDir `
+        -UvPath $UvPath -RepositoryRoot $RepositoryRoot)
+    $outputs = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($command in $plan) {
+        $completed = Invoke-FixedCommand -FilePath $command.file_path `
+            -Arguments $command.arguments -WorkingDirectory $command.working_directory
+        if ($completed.exit_code -ne 0) {
+            throw "accepted 验证阶段 $($command.name) 失败：$($completed.stderr)"
+        }
+        try {
+            $payload = $completed.stdout | ConvertFrom-Json
+        }
+        catch {
+            throw "accepted 验证阶段 $($command.name) 未返回合法 JSON：$($_.Exception.Message)"
+        }
+        [void]$outputs.Add($payload)
+    }
+
+    $reportPayload = $outputs[0]
+    $stateProperty = $reportPayload.PSObject.Properties['state']
+    $statusProperty = $reportPayload.PSObject.Properties['status']
+    $acceptedState = if ($null -ne $stateProperty) {
+        [string]$stateProperty.Value
+    }
+    elseif ($null -ne $statusProperty) {
+        [string]$statusProperty.Value
+    }
+    else {
+        ''
+    }
+    if ($acceptedState -ne 'accepted') {
+        throw "运行报告状态不是 accepted：$acceptedState"
+    }
+
+    [pscustomobject][ordered]@{
+        status = 'accepted'
+        report = $reportPayload
+        prediction = $outputs[1]
+        model_kind = $ModelKind
+        run_dir = (Resolve-Path -LiteralPath $RunDir).Path
+    }
+}
+
+function Get-InstallationPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('Prerequisites', 'Python', 'Fenicsx', 'FullChain')]
+        [string]$Level,
+        [string]$AcceptedRunDir,
+        [ValidateSet('scalar', 'heat1d', 'elasticity2d')]
+        [string]$ModelKind,
+        [string]$UvPath = 'uv',
+        [string]$CondaPath = 'conda',
+        [string]$RepositoryRoot = (Get-SurrogateRepositoryRoot).Path
+    )
+
+    $root = [IO.Path]::GetFullPath($RepositoryRoot)
+    if ($Level -eq 'FullChain') {
+        if ([string]::IsNullOrWhiteSpace($AcceptedRunDir) -or
+            [string]::IsNullOrWhiteSpace($ModelKind)) {
+            throw 'FullChain 必须同时提供 AcceptedRunDir 和 ModelKind。'
+        }
+        $null = Resolve-Path -LiteralPath $AcceptedRunDir
+    }
+
+    $python = @(
+        New-CommandSpec 'cli-help' $UvPath @('run', 'surrogate-loop', '--help') $root
+        New-CommandSpec 'cli-version' $UvPath @(
+            'run', 'python', '-m', 'surrogate_loop', '--version'
+        ) $root
+        New-CommandSpec 'cuda-backward' $UvPath @(
+            'run', 'python', '-c',
+            "import torch; x=torch.randn(128,128,device='cuda',requires_grad=True); y=x.square().mean(); y.backward(); print(torch.cuda.get_device_name(0), torch.isfinite(x.grad).all().item())"
+        ) $root
+        New-CommandSpec 'ruff' $UvPath @('run', 'ruff', 'check', '.') $root
+        New-CommandSpec 'pytest' $UvPath @('run', 'pytest', '-q') $root
+    )
+    $fenicsx = @(
+        New-CommandSpec 'fenicsx-doctor' $UvPath @(
+            'run', 'surrogate-loop', 'elasticity2d', 'doctor'
+        ) $root
+        New-CommandSpec 'solver-tests' $CondaPath @(
+            'run', '-n', 'surrogate-loop-fenicsx-0.11', 'python', '-m', 'pytest',
+            'tests/solver/elasticity2d', '-v'
+        ) $root
+    )
+    $fullChain = @(
+        New-CommandSpec 'real-fenicsx-e2e' $UvPath @(
+            'run', 'pytest', 'tests/e2e/test_elasticity2d_fenicsx_loop.py', '-v'
+        ) $root
+    )
+
+    switch ($Level) {
+        'Prerequisites' { return @() }
+        'Python' { return @($python) }
+        'Fenicsx' { return @($python + $fenicsx) }
+        'FullChain' { return @($python + $fenicsx + $fullChain) }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-SurrogateRepositoryRoot',
     'New-MigrationResult',
@@ -567,5 +730,8 @@ Export-ModuleMember -Function @(
     'Write-MigrationOutput',
     'Find-CondaExecutable',
     'Get-PrerequisiteReport',
-    'Get-EnvironmentPlan'
+    'Get-EnvironmentPlan',
+    'Get-ModelVerificationPlan',
+    'Invoke-ModelVerification',
+    'Get-InstallationPlan'
 )

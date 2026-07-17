@@ -183,3 +183,113 @@ def test_initialize_whatif_json_is_single_planned_object() -> None:
         "fenicsx-doctor",
     ]
     assert payload["evidence"]["executed"] == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "report_tokens", "predict_tokens"),
+    (
+        ("scalar", ["report"], ["predict", "--gamma", "0.35"]),
+        ("heat1d", ["operator", "report"], ["operator", "predict", "--alpha", "0.1"]),
+        (
+            "elasticity2d",
+            ["elasticity2d", "report"],
+            ["elasticity2d", "predict", "--e", "3"],
+        ),
+    ),
+)
+def test_model_verification_plan_is_allowlisted(
+    tmp_path: Path,
+    kind: str,
+    report_tokens: list[str],
+    predict_tokens: list[str],
+) -> None:
+    completed = _run_powershell(
+        f"Import-Module {_ps_quote(MODULE)} -Force;"
+        f"Get-ModelVerificationPlan -ModelKind '{kind}' "
+        f"-RunDir {_ps_quote(tmp_path)} | ConvertTo-Json -Depth 10 -Compress"
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert all(token in payload[0]["arguments"] for token in report_tokens)
+    assert all(token in payload[1]["arguments"] for token in predict_tokens)
+
+
+def test_unknown_model_kind_and_incomplete_full_chain_are_rejected(
+    tmp_path: Path,
+) -> None:
+    unknown = _run_powershell(
+        f"Import-Module {_ps_quote(MODULE)} -Force;"
+        f"Get-ModelVerificationPlan -ModelKind 'shell' -RunDir {_ps_quote(tmp_path)}"
+    )
+    assert unknown.returncode != 0
+
+    incomplete = _run_powershell(
+        f"Import-Module {_ps_quote(MODULE)} -Force;"
+        "Get-InstallationPlan -Level 'FullChain'"
+    )
+    assert incomplete.returncode != 0
+
+
+def test_installation_plans_never_run_formal_training(tmp_path: Path) -> None:
+    completed = _run_powershell(
+        f"Import-Module {_ps_quote(MODULE)} -Force;"
+        f"Get-InstallationPlan -Level 'FullChain' -ModelKind 'elasticity2d' "
+        f"-AcceptedRunDir {_ps_quote(tmp_path)} | ConvertTo-Json -Depth 10 -Compress"
+    )
+    assert completed.returncode == 0, completed.stderr
+    text = completed.stdout
+    assert "test_elasticity2d_fenicsx_loop.py" in text
+    for forbidden in ("calibrate", "full.json", "elasticity2d run", "sealed-test"):
+        assert forbidden not in text
+
+
+def test_installation_levels_are_cumulative(tmp_path: Path) -> None:
+    expected_names = {
+        "Prerequisites": [],
+        "Python": ["cli-help", "cli-version", "cuda-backward", "ruff", "pytest"],
+        "Fenicsx": [
+            "cli-help",
+            "cli-version",
+            "cuda-backward",
+            "ruff",
+            "pytest",
+            "fenicsx-doctor",
+            "solver-tests",
+        ],
+        "FullChain": [
+            "cli-help",
+            "cli-version",
+            "cuda-backward",
+            "ruff",
+            "pytest",
+            "fenicsx-doctor",
+            "solver-tests",
+            "real-fenicsx-e2e",
+        ],
+    }
+    for level, names in expected_names.items():
+        extra = (
+            f" -ModelKind 'elasticity2d' -AcceptedRunDir {_ps_quote(tmp_path)}"
+            if level == "FullChain"
+            else ""
+        )
+        completed = _run_powershell(
+            f"Import-Module {_ps_quote(MODULE)} -Force;"
+            f"Get-InstallationPlan -Level '{level}'{extra} | "
+            "ConvertTo-Json -Depth 10 -Compress"
+        )
+        assert completed.returncode == 0, completed.stderr
+        payload = json.loads(completed.stdout or "[]")
+        plan = payload if isinstance(payload, list) else [payload]
+        assert [item["name"] for item in plan] == names
+
+
+def test_installation_script_restores_e2e_environment_and_refuses_report_overwrite() -> (
+    None
+):
+    content = (TOOLS / "Test-Installation.ps1").read_text(encoding="utf-8")
+    assert "try" in content and "finally" in content
+    assert "SURROGATE_LOOP_RUN_FENICSX_E2E" in content
+    assert "Test-Path -LiteralPath $ReportPath" in content
+    assert "[IO.FileMode]::CreateNew" in content
+    assert "exit 5" in content
