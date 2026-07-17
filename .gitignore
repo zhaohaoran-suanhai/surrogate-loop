@@ -10,5 +10,8 @@ __pycache__/
 htmlcov/
 build/
 dist/
+*.surrogate-run.zip
+*.surrogate-run.sha256.json
+migration-verification*.json
 runs/*
 !runs/.gitkeep

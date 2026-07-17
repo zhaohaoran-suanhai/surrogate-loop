@@ -40,6 +40,18 @@ function New-MigrationResult {
     }
 }
 
+function New-MigrationException {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [Parameter(Mandatory)][int]$ExitCode
+    )
+
+    $exception = New-Object InvalidOperationException($Message)
+    $exception.Data['MigrationExitCode'] = $ExitCode
+    $exception
+}
+
 function ConvertTo-MigrationJson {
     [CmdletBinding()]
     param([Parameter(Mandatory, ValueFromPipeline)]$InputObject)
@@ -719,6 +731,156 @@ function Get-InstallationPlan {
     }
 }
 
+function New-RunBundleArchive {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RunDir,
+        [Parameter(Mandatory)]
+        [ValidateSet('scalar', 'heat1d', 'elasticity2d')]
+        [string]$ModelKind,
+        [Parameter(Mandatory)][string]$OutputDirectory,
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)]$Verification
+    )
+
+    $statusProperty = $Verification.PSObject.Properties['status']
+    if ($null -eq $statusProperty -or [string]$statusProperty.Value -ne 'accepted') {
+        throw (New-MigrationException -Message '只有 accepted 验证结果可以导出。' -ExitCode 2)
+    }
+
+    $resolvedRun = (Resolve-Path -LiteralPath $RunDir).Path
+    if (-not (Test-Path -LiteralPath $resolvedRun -PathType Container)) {
+        throw (New-MigrationException -Message "运行目录不存在：$RunDir" -ExitCode 2)
+    }
+    $runId = Split-Path -Leaf $resolvedRun
+    if ($runId -notmatch '^[A-Za-z0-9._-]+$') {
+        throw (New-MigrationException -Message "run_id 包含不允许的字符：$runId" -ExitCode 2)
+    }
+
+    $resolvedOutput = (Resolve-Path -LiteralPath $OutputDirectory).Path
+    if (-not (Test-Path -LiteralPath $resolvedOutput -PathType Container)) {
+        throw (New-MigrationException -Message "输出目录不存在：$OutputDirectory" -ExitCode 2)
+    }
+    if (((Get-Item -LiteralPath $resolvedOutput).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw (New-MigrationException -Message "输出目录不能是重解析点：$resolvedOutput" -ExitCode 2)
+    }
+
+    $archiveName = "$runId.surrogate-run.zip"
+    $checksumName = "$runId.surrogate-run.sha256.json"
+    $archivePath = Join-Path $resolvedOutput $archiveName
+    $checksumPath = Join-Path $resolvedOutput $checksumName
+    if ((Test-Path -LiteralPath $archivePath) -or (Test-Path -LiteralPath $checksumPath)) {
+        throw (New-MigrationException -Message '导出 archive 或 checksum 已存在，拒绝覆盖。' -ExitCode 5)
+    }
+
+    $files = @(Get-FileManifest -Root $resolvedRun)
+    $resolvedRepository = (Resolve-Path -LiteralPath $RepositoryRoot).Path
+    $gitPath = Get-ApplicationPath -Names @('git.exe', 'git')
+    if ($null -eq $gitPath) {
+        throw (New-MigrationException -Message '未找到 Git，无法记录导出提交。' -ExitCode 3)
+    }
+    $commitResult = Invoke-FixedCommand -FilePath $gitPath `
+        -Arguments @('-C', $resolvedRepository, 'rev-parse', 'HEAD') `
+        -WorkingDirectory $resolvedRepository
+    if ($commitResult.exit_code -ne 0) {
+        throw (New-MigrationException -Message "读取 Git 提交失败：$($commitResult.stderr)" -ExitCode 3)
+    }
+    $statusResult = Invoke-FixedCommand -FilePath $gitPath `
+        -Arguments @('-C', $resolvedRepository, 'status', '--porcelain') `
+        -WorkingDirectory $resolvedRepository
+    if ($statusResult.exit_code -ne 0) {
+        throw (New-MigrationException -Message "读取 Git 状态失败：$($statusResult.stderr)" -ExitCode 3)
+    }
+    $commit = $commitResult.stdout.Trim()
+    $dirty = -not [string]::IsNullOrWhiteSpace($statusResult.stdout)
+    $bundle = [pscustomobject][ordered]@{
+        schema_version = 1
+        model_kind = $ModelKind
+        run_id = $runId
+        export_repo_commit = $commit
+        export_repo_dirty = [bool]$dirty
+        created_at_utc = [DateTime]::UtcNow.ToString('o')
+        files = $files
+    }
+
+    $stagingRoot = Join-Path ([IO.Path]::GetTempPath()) `
+        ('surrogate-loop-export-' + [guid]::NewGuid().ToString('N'))
+    $contentRoot = Join-Path $stagingRoot 'content'
+    $stagingRun = Join-Path $contentRoot (Join-Path 'run' $runId)
+    $stagingArchive = Join-Path $stagingRoot $archiveName
+    $stagingChecksum = Join-Path $stagingRoot $checksumName
+    $archivePublished = $false
+    try {
+        $null = New-Item -ItemType Directory -Path $stagingRun
+        $bundlePath = Join-Path $contentRoot 'bundle.json'
+        [IO.File]::WriteAllText(
+            $bundlePath,
+            ($bundle | ConvertTo-Json -Depth 20 -Compress),
+            (New-Object Text.UTF8Encoding($false))
+        )
+        foreach ($file in $files) {
+            $relative = ([string]$file.path).Replace('/', '\')
+            $source = Join-Path $resolvedRun $relative
+            $destination = Join-Path $stagingRun $relative
+            $destinationParent = Split-Path -Parent $destination
+            if (-not (Test-Path -LiteralPath $destinationParent -PathType Container)) {
+                $null = New-Item -ItemType Directory -Path $destinationParent
+            }
+            [IO.File]::Copy($source, $destination, $false)
+        }
+
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::CreateFromDirectory(
+            $contentRoot,
+            $stagingArchive,
+            [IO.Compression.CompressionLevel]::Optimal,
+            $false
+        )
+        $sidecar = [pscustomobject][ordered]@{
+            schema_version = 1
+            archive_name = $archiveName
+            archive_bytes = [int64](Get-Item -LiteralPath $stagingArchive).Length
+            archive_sha256 = (Get-FileHash -LiteralPath $stagingArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        [IO.File]::WriteAllText(
+            $stagingChecksum,
+            ($sidecar | ConvertTo-Json -Depth 10 -Compress),
+            (New-Object Text.UTF8Encoding($false))
+        )
+
+        [IO.File]::Move($stagingArchive, $archivePath)
+        $archivePublished = $true
+        [IO.File]::Move($stagingChecksum, $checksumPath)
+
+        [pscustomobject][ordered]@{
+            archive_path = $archivePath
+            checksum_path = $checksumPath
+            bundle = $bundle
+            verification = $Verification
+        }
+    }
+    catch {
+        if ($archivePublished -and (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+            Remove-Item -LiteralPath $archivePath -Force -Confirm:$false
+        }
+        if ($null -eq $_.Exception.Data['MigrationExitCode']) {
+            $_.Exception.Data['MigrationExitCode'] = 4
+        }
+        throw
+    }
+    finally {
+        $resolvedStaging = [IO.Path]::GetFullPath($stagingRoot)
+        $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        $stagingName = Split-Path -Leaf $resolvedStaging
+        if ((Test-Path -LiteralPath $resolvedStaging) -and
+            $resolvedStaging.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+            $stagingName -match '^surrogate-loop-export-[0-9a-f]{32}$' -and
+            ((Get-Item -LiteralPath $resolvedStaging).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+            Remove-Item -LiteralPath $resolvedStaging -Recurse -Force -Confirm:$false
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-SurrogateRepositoryRoot',
     'New-MigrationResult',
@@ -733,5 +895,6 @@ Export-ModuleMember -Function @(
     'Get-EnvironmentPlan',
     'Get-ModelVerificationPlan',
     'Invoke-ModelVerification',
-    'Get-InstallationPlan'
+    'Get-InstallationPlan',
+    'New-RunBundleArchive'
 )
