@@ -164,3 +164,10 @@
 ## 验收记录方法
 
 每次演练在文末记录日期、场景、实际读取文件、第一条路由判断、授权判断、发现的问题和最终结论。若发现问题，先修正文档，再重新演练同一场景。
+
+## 2026-07-17 文档路由自检
+
+- 场景 1：通过。实际读取 `AGENTS.md`、`docs/README.md`、`docs/当前能力与状态.md`、`docs/demos/README.md`、`docs/demos/二维线弹性演示手册.md`。路由能默认选择快速展示，公式、六阶段流程、`development_complete` 和非 Full 边界完整；未发现需要修正的问题。
+- 场景 2：通过。实际读取 `AGENTS.md`、`docs/README.md`、`docs/当前能力与状态.md`、`docs/guides/Agent协作指南.md`、`docs/demos/二维线弹性演示手册.md`、`docs/guides/二维线弹性闭环操作指南.md`、`examples/elasticity_2d_cantilever/smoke.json`。路由能选择已有闭环 Smoke，要求成本说明、doctor/validate、六阶段进度和阶段复用披露，且不触及 Full；未发现需要修正的问题。
+- 场景 3：通过。实际读取 `AGENTS.md`、`docs/README.md`、`docs/当前能力与状态.md`、`docs/guides/Agent协作指南.md`。由于用户尚未给出具体 PDE，没有读取历史实施计划或擅自选择物理问题；路由能先进入中文规格评审，再进入实施计划和测试驱动实现；未发现需要修正的问题。
+- 结论：新 Agent 能在不通读历史计划的情况下选择演示、运行已有闭环或开发新 PDE 的正确路径，并识别需要额外授权的动作。

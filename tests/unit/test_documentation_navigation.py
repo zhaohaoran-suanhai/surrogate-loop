@@ -1,6 +1,8 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
 
 def _read(relative: str) -> str:
@@ -147,3 +149,33 @@ def test_agent_rehearsal_covers_demo_run_and_new_pde() -> None:
         assert prompt in content
     for required in ("必读文档", "预期路由", "合格判据", "失败表现"):
         assert required in content
+
+
+def test_local_markdown_links_resolve() -> None:
+    broken: list[str] = []
+    documents = [
+        ROOT / "AGENTS.md",
+        ROOT / "README.md",
+        *sorted((ROOT / "docs").rglob("*.md")),
+    ]
+    for document in documents:
+        in_fence = False
+        prose: list[str] = []
+        for line in document.read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith(("```", "~~~")):
+                in_fence = not in_fence
+                continue
+            if not in_fence:
+                prose.append(line)
+        content = "\n".join(prose)
+        for raw_target in MARKDOWN_LINK.findall(content):
+            target = raw_target.strip().strip("<>")
+            if not target or target.startswith("#") or "://" in target:
+                continue
+            relative = target.split("#", 1)[0]
+            if not relative:
+                continue
+            candidate = (document.parent / relative).resolve()
+            if not candidate.exists():
+                broken.append(f"{document.relative_to(ROOT)} -> {target}")
+    assert broken == []
