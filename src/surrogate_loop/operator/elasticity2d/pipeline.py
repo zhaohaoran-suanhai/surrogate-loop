@@ -11,6 +11,7 @@ import torch
 from surrogate_loop.operator.elasticity2d.artifacts import (
     AcceptanceResult,
     ElasticityRunState,
+    _benchmark_neural,
     _write_json_atomic,
     evaluate_sealed_once,
     freeze_run,
@@ -33,6 +34,7 @@ from surrogate_loop.operator.elasticity2d.problem import elasticity_features
 from surrogate_loop.operator.elasticity2d.reporting import write_smoke_diagnostics
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 from surrogate_loop.operator.elasticity2d.training import (
+    SelectedTraining,
     predict_dataset,
     train_and_select,
 )
@@ -107,7 +109,7 @@ def run_elasticity_pipeline(
                     dataset_files,
                     normalization,
                     baseline,
-                    selected.selected.state_dict,
+                    selected,
                 )
             freeze_run(
                 run_dir,
@@ -199,11 +201,11 @@ def _evaluate_development(
     dataset_files: DatasetFiles,
     normalization: FieldNormalization,
     baseline: PodRbfBaseline,
-    state_dict: dict[str, torch.Tensor],
+    selected: SelectedTraining,
 ) -> ElasticityRunResult:
     dataset = _load_development_test(dataset_files)
     model = build_elasticity_deeponet(spec.model).to("cpu")
-    model.load_state_dict(state_dict)
+    model.load_state_dict(selected.selected.state_dict)
     prediction = predict_dataset(
         model,
         dataset,
@@ -224,6 +226,24 @@ def _evaluate_development(
         prediction,
         dataset_files.manifest_path,
     )
+    neural_seconds = _benchmark_neural(
+        model,
+        dataset,
+        normalization,
+        spec.training.query_batch_size,
+    )
+    fenicsx_median, fenicsx_p95 = _solver_timing_summary(
+        dataset_files.manifest_path,
+        dataset.sample_ids,
+    )
+    timing = {
+        "scope": "single_sample_cpu_assembly_solve_interpolation_vs_neural_inference",
+        "neural_median_seconds": neural_seconds,
+        "fenicsx_median_seconds": fenicsx_median,
+        "fenicsx_p95_seconds": fenicsx_p95,
+        "speedup": fenicsx_median / neural_seconds,
+    }
+    training = _training_summary(selected)
     result = ElasticityRunResult(
         run_dir=run_dir,
         status="development_complete",
@@ -233,20 +253,79 @@ def _evaluate_development(
     _write_json_atomic(
         run_dir / "development_evaluation.json",
         {
+            "schema_version": 5,
             "status": result.status,
             "deeponet_metrics": deeponet_metrics,
             "pod_rbf_metrics": pod_metrics,
+            "training": training,
+            "timing": timing,
         },
     )
     _write_json_atomic(
         run_dir / "development_stage.json",
         {
+            "schema_version": 5,
             "status": "complete",
             "result_sha256": sha256_file(run_dir / "development_evaluation.json"),
             "diagnostic_sha256": diagnostic_hashes,
         },
     )
     return result
+
+
+def _training_summary(selected: SelectedTraining) -> dict[str, object]:
+    return {
+        "loss": "balanced_relative_dimensionless_shape_mse_v1",
+        "selected_seed": selected.selected_seed,
+        "candidates": [
+            {
+                "seed": candidate.seed,
+                "best_epoch": candidate.best_epoch,
+                "validation_loss": candidate.validation_loss,
+                "stop_reason": candidate.stop_reason,
+                "device": candidate.device,
+                "elapsed_seconds": candidate.elapsed_seconds,
+                "peak_cuda_memory_mb": candidate.peak_cuda_memory_mb,
+                "history": [
+                    {
+                        "epoch": record.epoch,
+                        "train_loss": record.train_loss,
+                        "validation_loss": record.validation_loss,
+                        "learning_rate": record.learning_rate,
+                    }
+                    for record in candidate.history
+                ],
+            }
+            for candidate in selected.candidates
+        ],
+    }
+
+
+def _solver_timing_summary(
+    manifest_path: Path,
+    sample_ids: np.ndarray,
+) -> tuple[float, float]:
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        records = payload["samples"]
+        selected = set(np.asarray(sample_ids, dtype=np.str_).tolist())
+        timings = np.asarray(
+            [
+                float(record["diagnostics"]["solve_seconds"])
+                for record in records
+                if record.get("sample_id") in selected
+            ],
+            dtype=np.float64,
+        )
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("无法读取 Smoke FEniCSx 计时证据") from error
+    if (
+        timings.shape != (len(selected),)
+        or not np.isfinite(timings).all()
+        or np.any(timings <= 0.0)
+    ):
+        raise RuntimeError("Smoke FEniCSx 计时证据不完整")
+    return float(np.median(timings)), float(np.percentile(timings, 95.0))
 
 
 def _load_development_test(files: DatasetFiles) -> FieldDataset:
@@ -314,7 +393,9 @@ def _stage_hash_matches(stage_path: Path, result_path: Path) -> bool:
         payload = json.loads(stage_path.read_text(encoding="utf-8"))
         return bool(
             isinstance(payload, dict)
-            and set(payload) == {"status", "result_sha256", "diagnostic_sha256"}
+            and set(payload)
+            == {"schema_version", "status", "result_sha256", "diagnostic_sha256"}
+            and payload["schema_version"] == 5
             and payload["status"] == "complete"
             and payload["result_sha256"] == sha256_file(result_path)
             and _diagnostic_hashes_match(stage_path.parent, payload["diagnostic_sha256"])

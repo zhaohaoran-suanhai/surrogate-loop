@@ -170,6 +170,34 @@ def test_predict_dataset_restores_vector_field_shape_and_clamp() -> None:
     np.testing.assert_allclose(prediction[:, clamp], 0.0, rtol=0.0, atol=0.0)
 
 
+def test_balanced_shape_loss_is_invariant_to_load_modulus_scale() -> None:
+    shape = torch.tensor(
+        [[[[0.2, -0.4], [0.5, 0.1]]], [[[0.2, -0.4], [0.5, 0.1]]]],
+        dtype=torch.float32,
+    ).reshape(2, 2, 2)
+    parameters = torch.tensor(
+        [[1.0, 0.3, 0.002, 0.0, 0.5, 0.1], [5.0, 0.3, 0.01, 0.0, 0.5, 0.1]],
+        dtype=torch.float32,
+    )
+    scales = (parameters[:, 2] / parameters[:, 0])[:, None, None]
+    target = scales * shape
+    prediction = scales * shape * 1.1
+    component_rms = torch.sqrt(torch.mean(shape.square(), dim=(0, 1)))
+    combined = training_module._balanced_shape_loss(
+        prediction, target, parameters, component_rms
+    )
+    first = training_module._balanced_shape_loss(
+        prediction[:1], target[:1], parameters[:1], component_rms
+    )
+    second = training_module._balanced_shape_loss(
+        prediction[1:], target[1:], parameters[1:], component_rms
+    )
+
+    assert combined == pytest.approx(0.01, rel=1e-5)
+    assert combined == pytest.approx(first)
+    assert combined == pytest.approx(second)
+
+
 def test_non_finite_loss_preserves_diagnostic_checkpoint(monkeypatch) -> None:
     spec = _tiny_spec(seeds=(17,))
     partitions = _partitions()

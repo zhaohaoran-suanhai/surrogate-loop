@@ -514,8 +514,7 @@ def _benchmark_neural(
     normalization: FieldNormalization,
     query_batch_size: int,
 ) -> float:
-    count = min(5, dataset.parameters.shape[0])
-    benchmark_dataset = dataset.subset(np.arange(count, dtype=np.int64))
+    benchmark_dataset = dataset.subset(np.array([0], dtype=np.int64))
     for _ in range(10):
         predict_dataset(
             model,

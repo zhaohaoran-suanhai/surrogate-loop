@@ -57,7 +57,7 @@ def build_sample_plan(spec: ElasticityRunSpec) -> SamplePlan:
     upper = np.array([value.high for value in bounds], dtype=np.float64)
     parameters = np.asarray(qmc.scale(unit, lower, upper), dtype=np.float64)
     if spec.mode == "calibration":
-        roles = np.full(total, "calibration", dtype=np.str_)
+        roles = np.full(total, "calibration", dtype="<U11")
     else:
         test_role = "sealed_test" if spec.mode == "full" else "development_test"
         roles = np.array(

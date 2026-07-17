@@ -46,7 +46,7 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 (E, nu, P, theta, y0, w) -> (u_x(x, y), u_y(x, y))
 ```
 
-已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理。真实微型跨环境测试已打通；正式本机校准和 Smoke 是下一检查点，Full 必须在 Smoke 评审后再次明确确认。
+已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理。真实微型跨环境测试、本机 16 样本校准和 144 样本 Smoke 均已走通。Smoke 的 DeepONet 中位相对 L2 误差为 1.75%，状态为 `development_complete`；P95 尚未达到 Full 门槛，因此该结果只证明流程可运行，不构成确认性精度验收。当前目标不要求继续调参或启动 Full。
 
 ## 环境要求
 

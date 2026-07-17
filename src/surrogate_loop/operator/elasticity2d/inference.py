@@ -135,6 +135,45 @@ def verify_elasticity_acceptance(
     return manifest, state, acceptance
 
 
+def read_elasticity_report(
+    run_dir: Path,
+) -> tuple[ElasticityRunState, dict[str, object]]:
+    directory = run_dir.resolve()
+    state = read_run_state(directory)
+    if state in {ElasticityRunState.ACCEPTED, ElasticityRunState.REJECTED}:
+        _, verified_state, payload = verify_elasticity_acceptance(directory)
+        return verified_state, payload
+    if state is not ElasticityRunState.TRAINED:
+        raise RuntimeError("二维弹性运行尚无可读报告")
+    stage = _read_json(directory / "development_stage.json")
+    if set(stage) != {
+        "schema_version",
+        "status",
+        "result_sha256",
+        "diagnostic_sha256",
+    } or stage.get("schema_version") != 5:
+        raise RuntimeError("二维弹性 Smoke 阶段字段无效")
+    result_path = directory / "development_evaluation.json"
+    diagnostics = stage.get("diagnostic_sha256")
+    if (
+        stage.get("status") != "complete"
+        or stage.get("result_sha256") != sha256_file(result_path)
+        or not _verify_development_diagnostics(directory, diagnostics)
+    ):
+        raise RuntimeError("二维弹性 Smoke 报告完整性校验失败")
+    payload = _read_json(result_path)
+    if set(payload) != {
+        "schema_version",
+        "status",
+        "deeponet_metrics",
+        "pod_rbf_metrics",
+        "training",
+        "timing",
+    } or payload.get("schema_version") != 5 or payload.get("status") != "development_complete":
+        raise RuntimeError("二维弹性 Smoke 报告字段无效")
+    return state, payload
+
+
 def predict_elasticity_points(
     bundle: ElasticityBundle,
     parameters: NDArray[np.float64],
@@ -204,6 +243,23 @@ def _verify_acceptance_stage(run_dir: Path) -> None:
         raise RuntimeError("FEniCSx 基准证据未进入验收摘要")
     if benchmark is not None and benchmark != sha256_file(benchmark_path):
         raise RuntimeError("FEniCSx 基准证据完整性校验失败")
+
+
+def _verify_development_diagnostics(run_dir: Path, payload: object) -> bool:
+    expected = {
+        "diagnostics/displacement_comparison.png",
+        "diagnostics/fenicsx_stress_summary.png",
+    }
+    return bool(
+        isinstance(payload, dict)
+        and set(payload) == expected
+        and all(
+            isinstance(digest, str)
+            and len(digest) == 64
+            and sha256_file(run_dir / relative) == digest
+            for relative, digest in payload.items()
+        )
+    )
 
 
 def _load_normalization(path: Path) -> FieldNormalization:

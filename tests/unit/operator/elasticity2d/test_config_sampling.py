@@ -72,6 +72,16 @@ def test_sample_plan_is_deterministic_and_roles_are_disjoint() -> None:
     assert np.sum(first.roles == "development_test") == 24
 
 
+def test_calibration_sample_plan_preserves_full_role_name() -> None:
+    spec = load_elasticity_spec(EXAMPLES / "calibration.json")
+
+    plan = build_sample_plan(spec)
+
+    assert plan.roles.dtype.itemsize >= len("calibration") * 4
+    assert np.all(plan.roles == "calibration")
+    assert all(sample_id.startswith("calibration-") for sample_id in plan.sample_ids)
+
+
 def test_sample_plan_respects_parameter_domain() -> None:
     spec = load_elasticity_spec(EXAMPLES / "full.json")
     plan = build_sample_plan(spec)

@@ -20,6 +20,7 @@ from surrogate_loop.operator.elasticity2d.artifacts import (
 from surrogate_loop.operator.elasticity2d.config import load_elasticity_spec
 from surrogate_loop.operator.elasticity2d.dataset import DatasetFiles
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
+from surrogate_loop.operator.elasticity2d.inference import read_elasticity_report
 from surrogate_loop.operator.elasticity2d.pod_rbf import PodRbfBaseline
 from surrogate_loop.operator.elasticity2d.problem import elasticity_features
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
@@ -28,9 +29,41 @@ from surrogate_loop.operator.elasticity2d.training import (
     TrainingRecord,
     TrainingResult,
 )
-from surrogate_loop.operator.field_data import FieldNormalization, sha256_file
+from surrogate_loop.operator.field_data import FieldDataset, FieldNormalization, sha256_file
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_neural_speed_benchmark_measures_one_sample(monkeypatch) -> None:
+    calls: list[int] = []
+    dataset = FieldDataset(
+        sample_ids=np.array([f"sample-{index}" for index in range(5)]),
+        parameters=np.tile(np.array([[2.0, 0.3, 0.004, 0.0, 0.5, 0.1]]), (5, 1)),
+        coordinates=np.array([[0.0, 0.0], [4.0, 1.0]]),
+        fields=np.zeros((5, 2, 2)),
+        diagnostics={},
+    )
+    normalization = FieldNormalization(
+        feature_mean=np.zeros(5),
+        feature_std=np.ones(5),
+        coordinate_mean=np.zeros(2),
+        coordinate_std=np.ones(2),
+        target_rms=np.ones(2),
+    )
+
+    def fake_predict(model, selected, normalization, device, query_batch_size):
+        calls.append(selected.parameters.shape[0])
+        return selected.fields
+
+    monkeypatch.setattr(artifacts_module, "predict_dataset", fake_predict)
+
+    elapsed = artifacts_module._benchmark_neural(
+        torch.nn.Identity(), dataset, normalization, 16
+    )
+
+    assert elapsed > 0.0
+    assert len(calls) == 110
+    assert set(calls) == {1}
 
 
 def test_run_state_machine_allows_only_declared_atomic_transitions(tmp_path) -> None:
@@ -252,6 +285,11 @@ def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypa
     assert (first.run_dir / "diagnostics/displacement_comparison.png").is_file()
     assert (first.run_dir / "diagnostics/fenicsx_stress_summary.png").is_file()
     assert not (first.run_dir / "freeze_manifest.json").exists()
+    state, report = read_elasticity_report(first.run_dir)
+    assert state is ElasticityRunState.TRAINED
+    assert report["status"] == "development_complete"
+    assert report["training"]["selected_seed"] == 20260716
+    assert report["timing"]["speedup"] > 0.0
 
     with (first.run_dir / "development_evaluation.json").open("ab") as stream:
         stream.write(b"tampered")
@@ -386,6 +424,7 @@ def _write_protocol_dataset(run_dir: Path, sample_plan) -> DatasetFiles:
     records = [
         {
             "sample_id": str(sample_id),
+            "diagnostics": {"solve_seconds": 0.05},
             "stress_summary": {
                 "stress_xx_min": -2.0,
                 "stress_xx_max": 3.0,

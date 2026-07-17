@@ -98,8 +98,8 @@ def train_one_seed(
 
     train = _prepare_dataset(partitions.train, normalization)
     validation = _prepare_dataset(partitions.validation, normalization)
-    target_rms = normalization.target_rms.astype(np.float32)
-    target_rms_tensor = torch.as_tensor(target_rms, device=device)[None, None, :]
+    component_rms = _shape_component_rms(train)
+    component_rms_tensor = torch.as_tensor(component_rms, device=device)
     rng = np.random.default_rng(seed)
     best_validation = float("inf")
     best_epoch = -1
@@ -137,7 +137,12 @@ def train_one_seed(
                 prediction = apply_elasticity_constraints(
                     raw, physical_branch, physical_trunk
                 )
-                loss = torch.mean(torch.square((prediction - target) / target_rms_tensor))
+                loss = _balanced_shape_loss(
+                    prediction,
+                    target,
+                    physical_branch,
+                    component_rms_tensor,
+                )
                 if not torch.isfinite(loss):
                     raise _training_failure(
                         "Vector DeepONet 训练损失出现 NaN 或 Inf",
@@ -182,7 +187,12 @@ def train_one_seed(
                 seed,
             ) from error
         validation_loss = float(
-            np.mean(np.square((validation_prediction - validation.targets) / target_rms))
+            _balanced_shape_loss(
+                torch.as_tensor(validation_prediction),
+                torch.as_tensor(validation.targets),
+                torch.as_tensor(validation.physical_parameters),
+                torch.as_tensor(component_rms),
+            )
         )
         if not np.isfinite(validation_loss):
             raise _training_failure(
@@ -347,6 +357,37 @@ def _validate_training_contract(
         or normalization.target_rms.shape != (2,)
     ):
         raise ValueError("二维弹性归一化统计维数无效")
+
+
+def _balanced_shape_loss(
+    prediction: Tensor,
+    target: Tensor,
+    physical_parameters: Tensor,
+    component_rms: Tensor,
+) -> Tensor:
+    if prediction.shape != target.shape or prediction.ndim != 3:
+        raise ValueError("平衡形状损失要求相同的三维预测和目标")
+    if physical_parameters.shape != (prediction.shape[0], 6):
+        raise ValueError("平衡形状损失的物理参数形状无效")
+    if component_rms.shape != (prediction.shape[2],) or torch.any(component_rms <= 0.0):
+        raise ValueError("平衡形状损失的分量尺度无效")
+    scales = (
+        physical_parameters[:, 2] / physical_parameters[:, 0]
+    )[:, None, None]
+    scaled_difference = (prediction - target) / scales / component_rms[None, None, :]
+    scaled_target = target / scales / component_rms[None, None, :]
+    difference_energy = torch.mean(scaled_difference.square(), dim=(1, 2))
+    target_energy = torch.mean(scaled_target.square(), dim=(1, 2)).clamp_min(1e-12)
+    return torch.mean(difference_energy / target_energy)
+
+
+def _shape_component_rms(dataset: _PreparedDataset) -> NDArray[np.float32]:
+    scales = dataset.physical_parameters[:, 2] / dataset.physical_parameters[:, 0]
+    shapes = dataset.targets / scales[:, None, None]
+    rms = np.sqrt(np.mean(np.square(shapes), axis=(0, 1)))
+    return np.maximum(rms, 1e-12).astype(np.float32)
+
+
 
 
 def _cpu_state_dict(model: VectorDeepONet) -> dict[str, Tensor]:

@@ -268,8 +268,8 @@ def _handle_elasticity(arguments: argparse.Namespace) -> None:
         load_elasticity_bundle,
         load_elasticity_spec_metadata,
         predict_elasticity_points,
+        read_elasticity_report,
         validate_elasticity_request,
-        verify_elasticity_acceptance,
     )
     from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 
@@ -312,7 +312,7 @@ def _handle_elasticity(arguments: argparse.Namespace) -> None:
         )
         return
     if command == "report":
-        _, state, payload = verify_elasticity_acceptance(arguments.run_dir)
+        state, payload = read_elasticity_report(arguments.run_dir)
         _print_json({"state": state.value, **payload})
         return
     if command == "predict":
