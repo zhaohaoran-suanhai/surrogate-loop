@@ -15,7 +15,8 @@ function Get-SurrogateRepositoryRoot {
             throw "仓库根目录缺少必要文件：$required"
         }
     }
-    Get-Item -LiteralPath $root
+    $item = Get-Item -LiteralPath $root
+    Add-Member -InputObject $item -NotePropertyName Path -NotePropertyValue $root -PassThru
 }
 
 function New-MigrationResult {
@@ -127,13 +128,13 @@ function Invoke-FixedCommand {
             $env:PYTHONUTF8 = $previousPythonUtf8
         }
         else {
-            Remove-Item -LiteralPath 'Env:PYTHONUTF8'
+            Remove-Item -LiteralPath 'Env:PYTHONUTF8' -WhatIf:$false -Confirm:$false
         }
         if ($hadPythonIoEncoding) {
             $env:PYTHONIOENCODING = $previousPythonIoEncoding
         }
         else {
-            Remove-Item -LiteralPath 'Env:PYTHONIOENCODING'
+            Remove-Item -LiteralPath 'Env:PYTHONIOENCODING' -WhatIf:$false -Confirm:$false
         }
     }
     if (-not $started) {
@@ -318,6 +319,243 @@ function Write-MigrationOutput {
     }
 }
 
+function Find-CondaExecutable {
+    [CmdletBinding()]
+    param()
+
+    foreach ($commandName in @('conda.exe', 'conda')) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $command) {
+            foreach ($candidate in @($command.Path, $command.Source, $command.Definition)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$candidate) -and
+                    (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                    return [IO.Path]::GetFullPath([string]$candidate)
+                }
+            }
+        }
+    }
+
+    $userProfile = [Environment]::GetFolderPath('UserProfile')
+    foreach ($relativePath in @(
+        'miniforge3\Scripts\conda.exe',
+        'Miniforge3\Scripts\conda.exe',
+        'AppData\Local\miniforge3\Scripts\conda.exe'
+    )) {
+        $candidate = Join-Path $userProfile $relativePath
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return [IO.Path]::GetFullPath($candidate)
+        }
+    }
+    return $null
+}
+
+function New-PrerequisiteCheck {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][bool]$Passed,
+        [AllowNull()]$Evidence,
+        [Parameter(Mandatory)][string]$Guidance
+    )
+
+    [pscustomobject][ordered]@{
+        name = $Name
+        status = if ($Passed) { 'pass' } else { 'fail' }
+        evidence = $Evidence
+        guidance = $Guidance
+    }
+}
+
+function Get-ApplicationPath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string[]]$Names)
+
+    foreach ($name in $Names) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $command) {
+            continue
+        }
+        foreach ($candidate in @($command.Path, $command.Source, $command.Definition)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$candidate) -and
+                (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                return [IO.Path]::GetFullPath([string]$candidate)
+            }
+        }
+    }
+    return $null
+}
+
+function Get-PrerequisiteReport {
+    [CmdletBinding()]
+    param()
+
+    $repositoryRoot = $null
+    $repositoryEvidence = $null
+    $repositoryFound = $false
+    try {
+        $repositoryRoot = (Get-SurrogateRepositoryRoot).Path
+        $repositoryEvidence = $repositoryRoot
+        $repositoryFound = $true
+    }
+    catch {
+        $repositoryEvidence = $_.Exception.Message
+    }
+
+    $windowsVersion = [Environment]::OSVersion.Version
+    $windows11 = [Environment]::Is64BitOperatingSystem -and $windowsVersion.Build -ge 22000
+    $windowsEvidence = [pscustomobject][ordered]@{
+        version = $windowsVersion.ToString()
+        build = $windowsVersion.Build
+        architecture = if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'non-x64' }
+    }
+
+    $git = Get-ApplicationPath -Names @('git.exe', 'git')
+    $uv = Get-ApplicationPath -Names @('uv.exe', 'uv')
+    $conda = Find-CondaExecutable
+
+    $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
+    $vswhere = Join-Path $programFilesX86 'Microsoft Visual Studio\Installer\vswhere.exe'
+    $msvcFound = $false
+    $vsEvidence = if (Test-Path -LiteralPath $vswhere -PathType Leaf) { $vswhere } else { 'vswhere.exe 未找到' }
+    if (Test-Path -LiteralPath $vswhere -PathType Leaf) {
+        try {
+            $vsResult = Invoke-FixedCommand -FilePath $vswhere -Arguments @(
+                '-latest', '-products', '*', '-requires',
+                'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'
+            ) -WorkingDirectory $programFilesX86
+            $vsEvidence = $vsResult.stdout.Trim()
+            $msvcFound = $vsResult.exit_code -eq 0 -and -not [string]::IsNullOrWhiteSpace($vsEvidence)
+            if (-not $msvcFound -and -not [string]::IsNullOrWhiteSpace($vsResult.stderr)) {
+                $vsEvidence = $vsResult.stderr.Trim()
+            }
+        }
+        catch {
+            $vsEvidence = $_.Exception.Message
+        }
+    }
+
+    $sdkInclude = Join-Path $programFilesX86 'Windows Kits\10\Include'
+    $sdkVersions = @()
+    if (Test-Path -LiteralPath $sdkInclude -PathType Container) {
+        $sdkVersions = @(Get-ChildItem -LiteralPath $sdkInclude -Directory -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty Name)
+    }
+    $sdkFound = $sdkVersions.Count -gt 0
+    $sdkEvidence = if ($sdkFound) { $sdkVersions -join ', ' } else { $sdkInclude }
+
+    $nvidiaSmi = Get-ApplicationPath -Names @('nvidia-smi.exe', 'nvidia-smi')
+    $gpuFound = $false
+    $gpuEvidence = if ($null -eq $nvidiaSmi) { 'nvidia-smi 未找到' } else { $nvidiaSmi }
+    if ($null -ne $nvidiaSmi) {
+        try {
+            $gpuResult = Invoke-FixedCommand -FilePath $nvidiaSmi -Arguments @(
+                '--query-gpu=name,driver_version,memory.total',
+                '--format=csv,noheader,nounits'
+            ) -WorkingDirectory $(if ($repositoryFound) { $repositoryRoot } else { $PWD.Path })
+            $gpuEvidence = $gpuResult.stdout.Trim()
+            $gpuFound = $gpuResult.exit_code -eq 0 -and -not [string]::IsNullOrWhiteSpace($gpuEvidence)
+            if (-not $gpuFound -and -not [string]::IsNullOrWhiteSpace($gpuResult.stderr)) {
+                $gpuEvidence = $gpuResult.stderr.Trim()
+            }
+        }
+        catch {
+            $gpuEvidence = $_.Exception.Message
+        }
+    }
+
+    $diskProbeSucceeded = $false
+    $diskEvidence = '仓库根目录不可用，未检查磁盘空间'
+    if ($repositoryFound) {
+        try {
+            $rootPath = [IO.Path]::GetPathRoot($repositoryRoot)
+            $drive = New-Object IO.DriveInfo($rootPath)
+            $freeGiB = [Math]::Round($drive.AvailableFreeSpace / 1GB, 2)
+            $diskProbeSucceeded = $freeGiB -ge 20
+            $diskEvidence = [pscustomobject][ordered]@{
+                drive = $rootPath
+                free_gib = $freeGiB
+                required_gib = 20
+            }
+        }
+        catch {
+            $diskEvidence = $_.Exception.Message
+        }
+    }
+
+    $checks = @(
+        New-PrerequisiteCheck 'windows11' $windows11 $windowsEvidence '需要 Windows 11 x64。'
+        New-PrerequisiteCheck 'powershell' ($PSVersionTable.PSVersion.Major -ge 5) $PSVersionTable.PSVersion.ToString() '需要 Windows PowerShell 5.1 或 PowerShell 7。'
+        New-PrerequisiteCheck 'git' ($null -ne $git) $git '安装 Git for Windows 后重新打开终端。'
+        New-PrerequisiteCheck 'uv' ($null -ne $uv) $uv '按 uv 官方说明安装后重新打开终端。'
+        New-PrerequisiteCheck 'conda' ($null -ne $conda) $conda '安装 Miniforge 后重新打开终端。'
+        New-PrerequisiteCheck 'msvc' $msvcFound $vsEvidence '安装 Visual Studio 2022 Build Tools 的“使用 C++ 的桌面开发”。'
+        New-PrerequisiteCheck 'windows_sdk' $sdkFound $sdkEvidence '在 Build Tools 中安装 Windows SDK。'
+        New-PrerequisiteCheck 'nvidia_gpu' $gpuFound $gpuEvidence '安装兼容 NVIDIA 驱动并确认 nvidia-smi 可用。'
+        New-PrerequisiteCheck 'repository' $repositoryFound $repositoryEvidence '从完整 Git 克隆运行工具。'
+        New-PrerequisiteCheck 'disk' $diskProbeSucceeded $diskEvidence '确认磁盘至少有 20 GiB 可用空间，以容纳 uv/Conda 缓存、两个环境和新样本。'
+    )
+    $failed = @($checks | Where-Object { $_.status -ne 'pass' })
+    [pscustomobject][ordered]@{
+        status = if ($failed.Count -eq 0) { 'pass' } else { 'fail' }
+        checks = $checks
+        summary = if ($failed.Count -eq 0) {
+            '系统前置条件检查通过。'
+        }
+        else {
+            "有 $($failed.Count) 项前置条件未通过，请按 guidance 处理。"
+        }
+    }
+}
+
+function New-CommandSpec {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Arguments,
+        [Parameter(Mandatory)][string]$WorkingDirectory
+    )
+
+    [pscustomobject][ordered]@{
+        name = $Name
+        file_path = $FilePath
+        arguments = @($Arguments)
+        working_directory = [IO.Path]::GetFullPath($WorkingDirectory)
+    }
+}
+
+function Get-EnvironmentPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][bool]$CondaEnvironmentExists,
+        [string]$UvPath = 'uv',
+        [string]$CondaPath = 'conda',
+        [string]$RepositoryRoot = (Get-SurrogateRepositoryRoot).Path
+    )
+
+    $root = [IO.Path]::GetFullPath($RepositoryRoot)
+    $environmentFile = Join-Path $root 'environments\fenicsx-0.11.yml'
+    @(
+        New-CommandSpec 'uv-python' $UvPath @('python', 'pin', '3.11') $root
+        New-CommandSpec 'uv-sync' $UvPath @('sync', '--extra', 'operator', '--all-groups') $root
+        if ($CondaEnvironmentExists) {
+            New-CommandSpec 'conda-environment' $CondaPath @(
+                'env', 'update', '-n', 'surrogate-loop-fenicsx-0.11', '-f', $environmentFile
+            ) $root
+        }
+        else {
+            New-CommandSpec 'conda-environment' $CondaPath @('env', 'create', '-f', $environmentFile) $root
+        }
+        New-CommandSpec 'python-imports' $UvPath @(
+            'run', 'python', '-c',
+            'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())'
+        ) $root
+        New-CommandSpec 'fenicsx-doctor' $UvPath @(
+            'run', 'surrogate-loop', 'elasticity2d', 'doctor'
+        ) $root
+    )
+}
+
 Export-ModuleMember -Function @(
     'Get-SurrogateRepositoryRoot',
     'New-MigrationResult',
@@ -326,5 +564,8 @@ Export-ModuleMember -Function @(
     'Get-FileManifest',
     'Test-FileManifest',
     'Test-SafeZipEntries',
-    'Write-MigrationOutput'
+    'Write-MigrationOutput',
+    'Find-CondaExecutable',
+    'Get-PrerequisiteReport',
+    'Get-EnvironmentPlan'
 )
