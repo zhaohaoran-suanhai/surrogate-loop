@@ -8,7 +8,9 @@
 
 梁区域固定为 `[0, 4] × [0, 1]`，左端固支，右端承受截断高斯分布载荷。网络只预测位移场；应变、应力和 von Mises 是 FEniCSx 侧的求解器诊断，不是当前神经网络的正式输出。
 
-当前架构为 `directional_linear_v2`：Branch 使用 `(nu,y0,w)`，网络学习水平/竖直单位载荷的四通道响应基，再由约束层按 `cos(theta)`/`sin(theta)` 精确叠加并施加 `P/E` 与固支边界。这一结构在不新增样本、复用原 Smoke 数据的同数据实验中，将全场相对 L2 中位/P95/最差从 1.75%/15.91%/61.89% 降至 0.56%/1.46%/4.89%。结果仍是 `development_complete` Smoke，不是 accepted Full。
+当前架构为 `directional_linear_v2`：Branch 使用 `(nu,y0,w)`，网络学习水平/竖直单位载荷的四通道响应基，再由约束层按 `cos(theta)`/`sin(theta)` 精确叠加并施加 `P/E` 与固支边界。这一结构在不新增样本、复用原 Smoke 数据的同数据实验中，将全场相对 L2 中位/P95/最差从 1.75%/15.91%/61.89% 降至 0.56%/1.46%/4.89%。这部分结果仍是 `development_complete` Smoke，只表示架构改进的开发证据。
+
+随后使用 736 个全新 FEniCSx 样本执行 Full，并在运行 `elasticity-full-ba8ff8e584d9` 的一次性封存测试上通过确认性验收，状态为 `accepted`。全场相对 L2 中位/P95/最差为 `0.2519%/1.5152%/4.4492%`，CPU 加速为 `931.18×`。该 Full 结果没有复用 Smoke 数据，也不能反向把 Smoke 历史改写为 Full。
 
 ## 三档配置
 
@@ -35,6 +37,6 @@ uv run surrogate-loop elasticity2d run --config examples/elasticity_2d_cantileve
 
 该入口不接受 Full；来源损坏或身份不匹配时会直接失败，不会回退为新建 FEniCSx 样本。
 
-Smoke 成功后可读取报告目录。正常可信推理入口只加载 `accepted` 的 Full 运行；Smoke 是模型开发证据，不能伪装成通过封存验收的生产模型。
+Smoke 成功后可读取开发报告。正常可信推理入口只加载摘要完整的 accepted Full；当前可信运行是 `runs/elasticity-full-ba8ff8e584d9/`。Smoke 是模型开发证据，不能伪装成通过封存验收的模型；重新执行新 Full 仍需明确授权。
 
 详细环境、产物、推理命令和排错说明见 [二维线弹性闭环操作指南](../../docs/guides/二维线弹性闭环操作指南.md)。

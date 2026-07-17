@@ -131,7 +131,9 @@ def test_elasticity_demo_has_two_modes_formulas_and_six_stages() -> None:
         "加速比",
     ):
         assert required in content
-    assert "二维线弹性当前未完成 Full" in content
+    assert "elasticity-full-ba8ff8e584d9" in content
+    assert "accepted" in content
+    assert "二维线弹性当前未完成 Full" not in content
 
 
 def test_demo_commands_match_current_elasticity_cli() -> None:
@@ -153,6 +155,17 @@ def test_demo_index_selects_elasticity_as_main_story() -> None:
     assert "主线" in content
     assert "一维热传导" in content
     assert "标量 ODE" in content
+    assert "../周报/2026-07-17-第01期-代理模型训练闭环周报.md" in content
+    assert "accepted Full" in content
+
+
+def test_elasticity_guide_and_example_record_full_acceptance() -> None:
+    guide = _read("docs/guides/二维线弹性闭环操作指南.md")
+    example = _read("examples/elasticity_2d_cantilever/README.md")
+    for content in (guide, example):
+        assert "elasticity-full-ba8ff8e584d9" in content
+        assert "accepted" in content
+    assert "当前未完成二维线弹性 Full" not in guide
 
 
 def test_root_readme_links_elasticity_demo() -> None:
