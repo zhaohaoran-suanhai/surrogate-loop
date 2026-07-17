@@ -56,7 +56,12 @@ if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
         Write-MigrationOutput -Result $result -Json:$Json
         exit 5
     }
-    $resolvedReportPath = [IO.Path]::GetFullPath($ReportPath)
+    $resolvedReportPath = if ([IO.Path]::IsPathRooted($ReportPath)) {
+        [IO.Path]::GetFullPath($ReportPath)
+    }
+    else {
+        [IO.Path]::GetFullPath((Join-Path $PWD.Path $ReportPath))
+    }
 }
 
 try {

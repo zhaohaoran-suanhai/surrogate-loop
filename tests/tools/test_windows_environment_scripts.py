@@ -293,6 +293,8 @@ def test_installation_script_restores_e2e_environment_and_refuses_report_overwri
     assert "Test-Path -LiteralPath $ReportPath" in content
     assert "[IO.FileMode]::CreateNew" in content
     assert "exit 5" in content
+    assert "[IO.Path]::IsPathRooted($ReportPath)" in content
+    assert "Join-Path $PWD.Path $ReportPath" in content
     conditional = content.index("if ($Level -eq 'FullChain')")
     model_binding = content.index("$planParameters['ModelKind'] = $ModelKind")
     plan_call = content.index("Get-InstallationPlan @planParameters")
