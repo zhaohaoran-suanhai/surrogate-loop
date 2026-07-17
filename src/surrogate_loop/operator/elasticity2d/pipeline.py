@@ -28,6 +28,9 @@ from surrogate_loop.operator.elasticity2d.dataset import (
     load_development_partitions,
 )
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
+from surrogate_loop.operator.elasticity2d.development_report import (
+    read_verified_development_report,
+)
 from surrogate_loop.operator.elasticity2d.evaluation import (
     compute_directional_error_summary,
     compute_elasticity_metrics,
@@ -181,6 +184,8 @@ def _resolve_run_directory(
     ).encode("utf-8")
     digest = hashlib.sha256(canonical).hexdigest()
     run_dir = runs_dir.resolve() / f"elasticity-{spec.mode}-{digest[:12]}"
+    if reuse_data_from is not None and _paths_overlap(run_dir, reuse_data_from):
+        raise ValueError("复用目标目录不得与源运行目录重叠")
     identity_payload = {**identity, "identity_sha256": digest}
     if not run_dir.exists():
         run_dir.mkdir(parents=True)
@@ -196,6 +201,12 @@ def _resolve_run_directory(
     if read_run_state(run_dir) is ElasticityRunState.FAILED:
         raise RuntimeError("failed 运行不得以相同身份恢复")
     return run_dir
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    left = first.resolve()
+    right = second.resolve()
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
 
 
 def _completed_result(
@@ -437,87 +448,16 @@ def _read_result(path: Path, run_dir: Path) -> ElasticityRunResult:
 
 def _stage_hash_matches(stage_path: Path, result_path: Path) -> bool:
     try:
-        payload = json.loads(stage_path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
+        run_dir = stage_path.parent.resolve()
+        if (
+            stage_path.resolve() != run_dir / "development_stage.json"
+            or result_path.resolve() != run_dir / "development_evaluation.json"
+        ):
             return False
-        common_valid = bool(
-            payload.get("status") == "complete"
-            and payload.get("result_sha256") == sha256_file(result_path)
-            and _diagnostic_hashes_match(
-                stage_path.parent, payload.get("diagnostic_sha256")
-            )
-        )
-        if payload.get("schema_version") == 5:
-            return bool(
-                set(payload)
-                == {"schema_version", "status", "result_sha256", "diagnostic_sha256"}
-                and common_valid
-            )
-        if payload.get("schema_version") != 6 or set(payload) != {
-            "schema_version",
-            "status",
-            "result_sha256",
-            "diagnostic_sha256",
-            "dataset_provenance_sha256",
-        }:
-            return False
-        result = json.loads(result_path.read_text(encoding="utf-8"))
-        return bool(
-            common_valid
-            and isinstance(result, dict)
-            and set(result)
-            == {
-                "schema_version",
-                "status",
-                "model_architecture",
-                "data_provenance",
-                "directional_metrics",
-                "deeponet_metrics",
-                "pod_rbf_metrics",
-                "training",
-                "timing",
-            }
-            and result.get("schema_version") == 6
-            and _dataset_provenance_matches(
-                stage_path.parent,
-                payload.get("dataset_provenance_sha256"),
-                result.get("data_provenance"),
-            )
-        )
-    except (OSError, json.JSONDecodeError, RuntimeError):
+        read_verified_development_report(run_dir)
+        return True
+    except RuntimeError:
         return False
-
-
-def _dataset_provenance_matches(
-    run_dir: Path, digest: object, report_provenance: object
-) -> bool:
-    path = run_dir / "dataset_reuse.json"
-    if digest is None:
-        return not path.exists() and report_provenance == {"mode": "generated"}
-    if not isinstance(digest, str) or len(digest) != 64 or not path.is_file():
-        return False
-    try:
-        evidence = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    return bool(
-        sha256_file(path) == digest
-        and report_provenance == {"mode": "reused", "evidence": evidence}
-    )
-
-
-def _diagnostic_hashes_match(run_dir: Path, payload: object) -> bool:
-    if not isinstance(payload, dict) or set(payload) != {
-        "diagnostics/displacement_comparison.png",
-        "diagnostics/fenicsx_stress_summary.png",
-    }:
-        return False
-    return all(
-        isinstance(digest, str)
-        and len(digest) == 64
-        and sha256_file(run_dir / relative) == digest
-        for relative, digest in payload.items()
-    )
 
 
 def _acceptance_stage_matches(run_dir: Path) -> bool:

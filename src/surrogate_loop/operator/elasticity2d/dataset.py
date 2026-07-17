@@ -90,6 +90,8 @@ def generate_or_reuse_dataset(
         raise ValueError("校准模式不生成训练数据集")
     if reuse_data_from is not None and spec.mode != "smoke":
         raise ValueError("只有 Smoke 运行可以复用已有 FEniCSx 数据")
+    if reuse_data_from is not None and _paths_overlap(run_dir, reuse_data_from):
+        raise ValueError("复用目标目录不得与源运行目录重叠")
     job_path = write_solver_job(spec, sample_plan, run_dir)
     if reuse_data_from is not None:
         return _reuse_verified_source(
@@ -237,6 +239,12 @@ def _copy_verified_file(source: Path, target: Path, expected_sha256: str) -> Non
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    left = first.resolve()
+    right = second.resolve()
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
 
 
 def load_development_partitions(

@@ -221,6 +221,42 @@ def test_invalid_smoke_reuse_source_is_rejected_without_solver_fallback(
         )
 
 
+@pytest.mark.parametrize("target_kind", ["same", "nested"])
+def test_reuse_rejects_source_target_overlap_without_modifying_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    spec = load_elasticity_spec(EXAMPLES / "smoke.json")
+    plan = build_sample_plan(spec)
+    source, _ = _write_source_run(tmp_path, spec, plan)
+    before = _tree_hashes(source)
+    target = source if target_kind == "same" else source / "nested-runs" / "target"
+    monkeypatch.setattr(
+        external_solver,
+        "run_solver_process",
+        lambda *args, **kwargs: pytest.fail("路径重叠不得调用 FEniCSx"),
+    )
+
+    with pytest.raises(ValueError, match="重叠"):
+        generate_or_reuse_dataset(
+            spec,
+            plan,
+            target,
+            ROOT,
+            reuse_data_from=source,
+        )
+
+    assert _tree_hashes(source) == before
+
+
+def _tree_hashes(root: Path) -> dict[str, str]:
+    return {
+        str(path.relative_to(root)): sha256_file(path)
+        for path in sorted(item for item in root.rglob("*") if item.is_file())
+    }
+
+
 def _write_source_run(tmp_path: Path, spec, plan) -> tuple[Path, Path]:
     source = tmp_path / "source"
     source.mkdir()
