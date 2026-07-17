@@ -68,6 +68,34 @@ def build_parser() -> argparse.ArgumentParser:
     operator_predict.add_argument("--nx", type=int)
     operator_predict.add_argument("--nt", type=int)
     operator_predict.add_argument("--output", type=Path)
+
+    elasticity = subparsers.add_parser(
+        "elasticity2d",
+        help="二维线弹性神经算子闭环",
+        description="二维线弹性神经算子闭环",
+    )
+    elasticity_commands = elasticity.add_subparsers(dest="elasticity_command")
+    elasticity_commands.add_parser("doctor", help="诊断隔离 FEniCSx 环境")
+    elasticity_validate = elasticity_commands.add_parser("validate", help="校验二维弹性配置")
+    elasticity_validate.add_argument("--config", type=Path, required=True)
+    elasticity_calibrate = elasticity_commands.add_parser("calibrate", help="运行求解器校准")
+    elasticity_calibrate.add_argument("--config", type=Path, required=True)
+    elasticity_calibrate.add_argument("--output-dir", type=Path, required=True)
+    elasticity_run = elasticity_commands.add_parser("run", help="训练并验收二维弹性算子")
+    elasticity_run.add_argument("--config", type=Path, required=True)
+    elasticity_run.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    elasticity_run.add_argument("--request", default="通过结构化配置启动二维弹性训练")
+    elasticity_report = elasticity_commands.add_parser("report", help="读取二维弹性报告")
+    elasticity_report.add_argument("--run-dir", type=Path, required=True)
+    elasticity_predict = elasticity_commands.add_parser("predict", help="二维弹性点或场预测")
+    elasticity_predict.add_argument("--run-dir", type=Path, required=True)
+    for name in ("e", "nu", "p", "theta", "y0", "w"):
+        elasticity_predict.add_argument(f"--{name}", type=float, required=True)
+    elasticity_predict.add_argument("--x", type=float)
+    elasticity_predict.add_argument("--y", type=float)
+    elasticity_predict.add_argument("--nx", type=int)
+    elasticity_predict.add_argument("--ny", type=int)
+    elasticity_predict.add_argument("--output", type=Path)
     return parser
 
 
@@ -75,7 +103,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
     try:
-        if arguments.command == "operator":
+        if arguments.command == "elasticity2d":
+            _handle_elasticity(arguments)
+        elif arguments.command == "operator":
             _handle_operator(arguments)
         elif arguments.command == "validate":
             spec = load_spec(arguments.config)
@@ -223,3 +253,112 @@ def _handle_operator(arguments: argparse.Namespace) -> None:
         _print_json({"output": str(output.resolve()), "shape": list(field.shape)})
         return
     raise ValueError("请为 operator 指定 validate、run、report 或 predict 子命令")
+
+
+def _handle_elasticity(arguments: argparse.Namespace) -> None:
+    import numpy as np
+
+    from surrogate_loop.operator import external_solver
+    from surrogate_loop.operator.elasticity2d.artifacts import (
+        verify_freeze_manifest,
+    )
+    from surrogate_loop.operator.elasticity2d.config import load_elasticity_spec
+    from surrogate_loop.operator.elasticity2d.dataset import write_solver_job
+    from surrogate_loop.operator.elasticity2d.inference import (
+        load_elasticity_bundle,
+        load_elasticity_spec_metadata,
+        predict_elasticity_points,
+        validate_elasticity_request,
+        verify_elasticity_acceptance,
+    )
+    from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
+
+    command = arguments.elasticity_command
+    if command == "doctor":
+        _print_json(external_solver.doctor_solver_environment(Path.cwd()))
+        return
+    if command == "validate":
+        spec = load_elasticity_spec(arguments.config)
+        _print_json({"status": "valid", "mode": spec.mode, "template": spec.problem.template})
+        return
+    if command == "calibrate":
+        spec = load_elasticity_spec(arguments.config)
+        if spec.mode != "calibration":
+            raise ValueError("calibrate 只接受 calibration 配置")
+        job = write_solver_job(spec, build_sample_plan(spec), arguments.output_dir)
+        completed = external_solver.run_solver_process(
+            "calibrate",
+            ("--job", str(job), "--output-dir", str(arguments.output_dir)),
+            Path.cwd(),
+            3600.0,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr.strip() or "FEniCSx 校准失败")
+        _print_json(external_solver.parse_solver_json(completed.stdout, "calibrate"))
+        return
+    if command == "run":
+        from surrogate_loop.operator.elasticity2d.pipeline import run_elasticity_pipeline
+
+        result = run_elasticity_pipeline(
+            arguments.config, arguments.runs_dir, arguments.request
+        )
+        _print_json(
+            {
+                "run_dir": str(result.run_dir.resolve()),
+                "status": result.status,
+                "deeponet_metrics": result.deeponet_metrics,
+                "pod_rbf_metrics": result.pod_rbf_metrics,
+            }
+        )
+        return
+    if command == "report":
+        _, state, payload = verify_elasticity_acceptance(arguments.run_dir)
+        _print_json({"state": state.value, **payload})
+        return
+    if command == "predict":
+        point_requested = arguments.x is not None or arguments.y is not None
+        if point_requested and (arguments.x is None or arguments.y is None):
+            raise ValueError("点预测必须同时提供 --x 和 --y")
+        parameters = np.array(
+            [[arguments.e, arguments.nu, arguments.p, arguments.theta, arguments.y0, arguments.w]],
+            dtype=np.float64,
+        )
+        coordinates = (
+            np.array([[arguments.x, arguments.y]], dtype=np.float64)
+            if point_requested
+            else None
+        )
+        spec = load_elasticity_spec_metadata(arguments.run_dir)
+        validate_elasticity_request(
+            spec, parameters, coordinates, nx=arguments.nx, ny=arguments.ny
+        )
+        bundle = load_elasticity_bundle(arguments.run_dir)
+        if point_requested:
+            displacement = predict_elasticity_points(bundle, parameters, coordinates)[0]
+            _print_json({"x": arguments.x, "y": arguments.y, "u": displacement.tolist()})
+            return
+        if arguments.output is None:
+            raise ValueError("场预测必须提供 --output")
+        nx = spec.observation.nx if arguments.nx is None else arguments.nx
+        ny = spec.observation.ny if arguments.ny is None else arguments.ny
+        x, y = np.meshgrid(np.linspace(0.0, 4.0, nx), np.linspace(0.0, 1.0, ny))
+        points = np.column_stack((x.ravel(), y.ravel()))
+        protected = {
+            (arguments.run_dir.resolve() / name).resolve()
+            for name in (
+                *verify_freeze_manifest(arguments.run_dir).files,
+                "freeze_manifest.json",
+                "status.json",
+                "acceptance.json",
+                "acceptance_stage.json",
+                "sealed_test_summary.json",
+            )
+        }
+        if arguments.output.resolve() in protected:
+            raise ValueError("输出路径不能覆盖受保护运行产物")
+        displacement = predict_elasticity_points(bundle, parameters, points)
+        arguments.output.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(arguments.output, coordinates=points, displacement=displacement)
+        _print_json({"output": str(arguments.output.resolve()), "shape": [ny, nx, 2]})
+        return
+    raise ValueError("请为 elasticity2d 指定固定子命令")
