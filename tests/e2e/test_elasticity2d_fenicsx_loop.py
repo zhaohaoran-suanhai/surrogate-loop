@@ -17,7 +17,7 @@ from surrogate_loop.operator.elasticity2d.deeponet import (
     apply_elasticity_constraints,
     build_elasticity_deeponet,
 )
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 from surrogate_loop.operator.field_data import FieldNormalization
 
@@ -60,14 +60,14 @@ def test_real_fenicsx_protocol_reaches_one_training_step(tmp_path) -> None:
     )
     partitions = load_development_partitions(files, plan)
     normalization = FieldNormalization.fit(
-        elasticity_features(partitions.train.parameters),
+        elasticity_basis_features(partitions.train.parameters),
         partitions.train.coordinates,
         partitions.train.fields,
     )
     model = build_elasticity_deeponet(spec.model)
     features = torch.as_tensor(
         normalization.normalize_features(
-            elasticity_features(partitions.train.parameters)
+            elasticity_basis_features(partitions.train.parameters)
         ).astype(np.float32)
     )
     coordinates = torch.as_tensor(

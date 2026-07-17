@@ -27,7 +27,9 @@ def test_fake_solver_exercises_validate_run_report_predict_without_claiming_feni
     monkeypatch.setattr(
         pipeline_module,
         "generate_or_reuse_dataset",
-        lambda spec, plan, run_dir, repo_root: _fake_solver_dataset(run_dir, plan),
+        lambda spec, plan, run_dir, repo_root, *, reuse_data_from=None: (
+            _fake_solver_dataset(run_dir, plan)
+        ),
     )
     monkeypatch.setattr(pipeline_module, "train_and_select", _fake_training)
     monkeypatch.setattr(pipeline_module, "resolve_device", lambda requested: torch.device("cpu"))
