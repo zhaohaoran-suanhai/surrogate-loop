@@ -14,6 +14,8 @@ def test_agent_documentation_entrypoints_exist() -> None:
         "docs/guides/Agent协作指南.md",
         "docs/demos/README.md",
         "docs/demos/二维线弹性演示手册.md",
+        "docs/demos/演示Skill内容草案.md",
+        "docs/demos/Agent接管验收清单.md",
     )
     assert [path for path in expected if not (ROOT / path).is_file()] == []
 
@@ -116,3 +118,32 @@ def test_demo_index_selects_elasticity_as_main_story() -> None:
 
 def test_root_readme_links_elasticity_demo() -> None:
     assert "docs/demos/二维线弹性演示手册.md" in _read("README.md")
+
+
+def test_future_skill_draft_is_content_only_and_reads_dynamic_facts() -> None:
+    content = _read("docs/demos/演示Skill内容草案.md")
+    for required in (
+        "触发场景",
+        "最小读取顺序",
+        "任务路由",
+        "六阶段",
+        "进度播报",
+        "Smoke/Full",
+        "完成报告",
+        "docs/当前能力与状态.md",
+    ):
+        assert required in content
+    assert "本文件不是可安装 Skill" in content
+    assert "固定实测数值" in content
+
+
+def test_agent_rehearsal_covers_demo_run_and_new_pde() -> None:
+    content = _read("docs/demos/Agent接管验收清单.md")
+    for prompt in (
+        "介绍这个仓库并演示二维线弹性的价值",
+        "从头运行二维线弹性闭环，并持续告诉我进度",
+        "我要扩展一个新的 PDE 代理模型",
+    ):
+        assert prompt in content
+    for required in ("必读文档", "预期路由", "合格判据", "失败表现"):
+        assert required in content

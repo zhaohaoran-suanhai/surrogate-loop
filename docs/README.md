@@ -42,6 +42,8 @@
 - [Agent 协作指南](guides/Agent协作指南.md)
 - [演示入口](demos/README.md)
 - [二维线弹性演示手册](demos/二维线弹性演示手册.md)
+- [Agent 接管验收清单](demos/Agent接管验收清单.md)
+- [演示 Skill 内容草案](demos/演示Skill内容草案.md)
 - [标量闭环操作指南](guides/标量闭环操作指南.md)
 - [一维热传导闭环操作指南](guides/一维热传导闭环操作指南.md)
 - [二维线弹性闭环操作指南](guides/二维线弹性闭环操作指南.md)
