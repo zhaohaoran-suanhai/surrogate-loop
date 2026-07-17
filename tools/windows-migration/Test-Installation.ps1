@@ -89,9 +89,17 @@ try {
         throw '未找到可执行的 Conda。'
     }
     $repositoryRoot = (Get-SurrogateRepositoryRoot).Path
-    $plan = @(Get-InstallationPlan -Level $Level -AcceptedRunDir $AcceptedRunDir `
-        -ModelKind $ModelKind -UvPath $uvPath -CondaPath $condaPath `
-        -RepositoryRoot $repositoryRoot)
+    $planParameters = @{
+        Level = $Level
+        UvPath = $uvPath
+        CondaPath = $condaPath
+        RepositoryRoot = $repositoryRoot
+    }
+    if ($Level -eq 'FullChain') {
+        $planParameters['AcceptedRunDir'] = $AcceptedRunDir
+        $planParameters['ModelKind'] = $ModelKind
+    }
+    $plan = @(Get-InstallationPlan @planParameters)
     $stageExitCode = 3
     $commandResults = New-Object 'System.Collections.Generic.List[object]'
     $verification = $null
