@@ -46,7 +46,9 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 (E, nu, P, theta, y0, w) -> (u_x(x, y), u_y(x, y))
 ```
 
-已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理保护。真实微型跨环境测试、calibration 和 Smoke 均已走通，Smoke 状态为 `development_complete`；它证明流程可运行，但不构成 Full 确认性精度验收。当前未完成二维线弹性 Full。
+已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理保护。真实微型跨环境测试、calibration、Smoke 和 Full 均已走通；Smoke 保留为 `development_complete` 开发证据，Full 运行 `elasticity-full-ba8ff8e584d9` 已在 736 个全新 FEniCSx 样本上完成一次性封存验收，状态为 `accepted`。
+
+Full 采用 `directional_linear_v2`，封存测试的全场相对 L2 中位/P95/最差为 `0.2519%/1.5152%/4.4492%`，当前 CPU 基准加速约 `931×`，正常可信推理入口已经验证。该结论只覆盖冻结的悬臂梁模板、参数域和验收摘要，不代表域外或生产认证。
 
 ## 环境要求
 
@@ -103,6 +105,7 @@ uv run surrogate-loop elasticity2d validate --config examples/elasticity_2d_cant
 uv run surrogate-loop elasticity2d calibrate --config examples/elasticity_2d_cantilever/calibration.json --output-dir runs/elasticity-calibration
 uv run surrogate-loop elasticity2d run --config examples/elasticity_2d_cantilever/smoke.json --runs-dir runs --request "训练二维悬臂梁位移场代理模型"
 uv run surrogate-loop elasticity2d report --run-dir runs/示例运行标识
+uv run surrogate-loop elasticity2d predict --run-dir runs/elasticity-full-ba8ff8e584d9 --e 3 --nu 0.3 --p 0.006 --theta -1.5707963268 --y0 0.5 --w 0.12 --x 4 --y 0.5
 ```
 
 例如，用户可以先用自然语言告诉 Codex：
@@ -126,8 +129,18 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 - [项目文档地图](docs/README.md)：新对话按演示、运行、诊断或开发新 PDE 选择最短阅读路径。
 - [当前能力与状态](docs/当前能力与状态.md)：查看三个闭环的最高证据、当前指标与功能边界。
 - [Agent 协作指南](docs/guides/Agent协作指南.md)：了解操作前说明、进度播报、完成报告和授权边界。
+- [第 01 期代理模型训练闭环周报](docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md)：20 分钟管理层汇报与技术证据链。
 
 二维线弹性是当前推荐演示主线，可从[二维线弹性演示手册](docs/demos/二维线弹性演示手册.md)选择快速展示或从头运行；详细运行合同见[二维线弹性闭环操作指南](docs/guides/二维线弹性闭环操作指南.md)。
+
+## Windows 跨机迁移
+
+当前迁移套件正式支持另一台 Windows 11 x64 + NVIDIA GPU 电脑。Git、uv、Miniforge、Visual Studio Build Tools、Windows SDK 和 NVIDIA 驱动仍由使用者人工安装；工具负责只读前置检查、uv/Conda 双环境计划与初始化、分级验证，以及三个 accepted 闭环运行的安全导出和导入。
+
+- [Windows 跨机迁移指南](docs/guides/Windows跨机迁移指南.md)：完整源电脑/目标电脑步骤、故障处理与证据边界。
+- [Windows 迁移工具速查](tools/windows-migration/README.md)：脚本参数、最短命令链和退出码。
+
+迁移工具的 `FullChain` 不会启动 calibration、Smoke、正式 Full 或 sealed-test；重新训练和新的确认性验收仍需单独授权。
 
 ## 文档
 
@@ -138,6 +151,7 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 - [二维线弹性神经算子实施计划](docs/2026-07-16-二维线弹性神经算子实施计划.md)
 - [仓库骨架与基础环境实施计划](docs/2026-07-16-仓库骨架与基础环境实施计划.md)
 - [环境与验证指南](docs/guides/环境与验证.md)
+- [Windows 跨机迁移指南](docs/guides/Windows跨机迁移指南.md)
 - [标量闭环操作指南](docs/guides/标量闭环操作指南.md)
 - [一维热传导闭环操作指南](docs/guides/一维热传导闭环操作指南.md)
 - [二维线弹性闭环操作指南](docs/guides/二维线弹性闭环操作指南.md)

@@ -18,6 +18,10 @@ def test_agent_documentation_entrypoints_exist() -> None:
         "docs/demos/二维线弹性演示手册.md",
         "docs/demos/演示Skill内容草案.md",
         "docs/demos/Agent接管验收清单.md",
+        "docs/周报/README.md",
+        "docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md",
+        "docs/guides/Windows跨机迁移指南.md",
+        "tools/windows-migration/README.md",
     )
     assert [path for path in expected if not (ROOT / path).is_file()] == []
 
@@ -26,7 +30,31 @@ def test_document_map_routes_four_agent_tasks() -> None:
     content = _read("docs/README.md")
     for required in ("演示", "运行已有闭环", "诊断", "开发新 PDE"):
         assert required in content
+    assert "周报" in content
     assert "不要默认全文读取所有实施计划" in content
+
+
+def test_first_weekly_report_covers_management_story_and_evidence_chain() -> None:
+    index = _read("docs/周报/README.md")
+    report = _read("docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md")
+    assert "第 01 期" in index
+    for required in (
+        "Executive Summary",
+        "基本架构",
+        "三个代理模型闭环",
+        "核心算法",
+        "二维线弹性",
+        "Full",
+        "能力边界",
+        "20 分钟演示",
+        "证据链",
+        "acceptance_stage.json",
+        "acceptance.json",
+        "elasticity-full-ba8ff8e584d9",
+    ):
+        assert required in report
+    assert "0.2519%" in report
+    assert "931.18" in report
 
 
 def test_capability_status_distinguishes_evidence_levels() -> None:
@@ -41,7 +69,9 @@ def test_capability_status_distinguishes_evidence_levels() -> None:
         "Full",
     ):
         assert required in content
-    assert "二维线弹性当前未完成 Full" in content
+    assert "elasticity-full-ba8ff8e584d9" in content
+    assert "二维线弹性 Full" in content
+    assert "二维线弹性当前未完成 Full" not in content
 
 
 def test_agent_rules_define_minimum_reading_order_and_authority() -> None:
@@ -78,6 +108,15 @@ def test_root_readme_links_agent_entries() -> None:
     content = _read("README.md")
     assert "docs/README.md" in content
     assert "docs/guides/Agent协作指南.md" in content
+    assert "docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md" in content
+    assert "当前未完成二维线弹性 Full" not in content
+
+
+def test_agent_rules_record_current_elasticity_full_evidence() -> None:
+    content = _read("AGENTS.md")
+    assert "二维线弹性 Full" in content
+    assert "accepted" in content
+    assert "未完成 Full" not in content
 
 
 def test_elasticity_demo_has_two_modes_formulas_and_six_stages() -> None:
@@ -94,7 +133,9 @@ def test_elasticity_demo_has_two_modes_formulas_and_six_stages() -> None:
         "加速比",
     ):
         assert required in content
-    assert "二维线弹性当前未完成 Full" in content
+    assert "elasticity-full-ba8ff8e584d9" in content
+    assert "accepted" in content
+    assert "二维线弹性当前未完成 Full" not in content
 
 
 def test_demo_commands_match_current_elasticity_cli() -> None:
@@ -116,6 +157,17 @@ def test_demo_index_selects_elasticity_as_main_story() -> None:
     assert "主线" in content
     assert "一维热传导" in content
     assert "标量 ODE" in content
+    assert "../周报/2026-07-17-第01期-代理模型训练闭环周报.md" in content
+    assert "accepted Full" in content
+
+
+def test_elasticity_guide_and_example_record_full_acceptance() -> None:
+    guide = _read("docs/guides/二维线弹性闭环操作指南.md")
+    example = _read("examples/elasticity_2d_cantilever/README.md")
+    for content in (guide, example):
+        assert "elasticity-full-ba8ff8e584d9" in content
+        assert "accepted" in content
+    assert "当前未完成二维线弹性 Full" not in guide
 
 
 def test_root_readme_links_elasticity_demo() -> None:
@@ -137,6 +189,8 @@ def test_future_skill_draft_is_content_only_and_reads_dynamic_facts() -> None:
         assert required in content
     assert "本文件不是可安装 Skill" in content
     assert "固定实测数值" in content
+    assert "accepted Full" in content
+    assert "二维线弹性当前未完成 Full" not in content
 
 
 def test_agent_rehearsal_covers_demo_run_and_new_pde() -> None:
@@ -151,12 +205,44 @@ def test_agent_rehearsal_covers_demo_run_and_new_pde() -> None:
         assert required in content
 
 
+def test_windows_migration_docs_define_safe_full_chain_contract() -> None:
+    guide = _read("docs/guides/Windows跨机迁移指南.md")
+    tools = _read("tools/windows-migration/README.md")
+    for required in (
+        "Windows 11 x64",
+        "NVIDIA GPU",
+        "Test-Prerequisites.ps1",
+        "Initialize-Environments.ps1",
+        "Test-Installation.ps1",
+        "Export-AcceptedRun.ps1",
+        "Import-AcceptedRun.ps1",
+        "FullChain",
+        "accepted",
+        "SHA-256",
+    ):
+        assert required in guide
+        assert required in tools
+    assert "不会自动安装" in guide
+    assert "不会启动 calibration、Smoke 或 Full" in guide
+    assert "SHA-256 不等于数字签名" in guide
+
+
+def test_root_and_document_map_link_windows_migration_guide() -> None:
+    root = _read("README.md")
+    document_map = _read("docs/README.md")
+    environment = _read("docs/guides/环境与验证.md")
+    assert "docs/guides/Windows跨机迁移指南.md" in root
+    assert "Windows跨机迁移指南.md" in document_map
+    assert "Windows跨机迁移指南.md" in environment
+
+
 def test_local_markdown_links_resolve() -> None:
     broken: list[str] = []
     documents = [
         ROOT / "AGENTS.md",
         ROOT / "README.md",
         *sorted((ROOT / "docs").rglob("*.md")),
+        *sorted((ROOT / "tools").rglob("*.md")),
     ]
     for document in documents:
         in_fence = False
