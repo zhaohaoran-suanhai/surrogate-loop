@@ -249,6 +249,8 @@ def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypa
     assert generate_calls == 1
     assert read_run_state(first.run_dir) is ElasticityRunState.TRAINED
     assert (first.run_dir / "development_evaluation.json").is_file()
+    assert (first.run_dir / "diagnostics/displacement_comparison.png").is_file()
+    assert (first.run_dir / "diagnostics/fenicsx_stress_summary.png").is_file()
     assert not (first.run_dir / "freeze_manifest.json").exists()
 
     with (first.run_dir / "development_evaluation.json").open("ab") as stream:
@@ -381,7 +383,27 @@ def _write_protocol_dataset(run_dir: Path, sample_plan) -> DatasetFiles:
             fields=fields[indices],
         )
     manifest_path = output / "dataset_manifest.json"
-    manifest_path.write_text("{}\n", encoding="utf-8")
+    records = [
+        {
+            "sample_id": str(sample_id),
+            "stress_summary": {
+                "stress_xx_min": -2.0,
+                "stress_xx_max": 3.0,
+                "stress_xx_p95": 2.5,
+                "stress_yy_min": -1.0,
+                "stress_yy_max": 1.5,
+                "stress_yy_p95": 1.2,
+                "stress_xy_min": -0.5,
+                "stress_xy_max": 0.75,
+                "stress_xy_p95": 0.6,
+                "von_mises_min": 0.0,
+                "von_mises_max": 4.0,
+                "von_mises_p95": 3.2,
+            },
+        }
+        for sample_id in sample_plan.sample_ids
+    ]
+    manifest_path.write_text(json.dumps({"samples": records}), encoding="utf-8")
     return DatasetFiles(
         development_path=development_path,
         sealed_test_path=test_path,

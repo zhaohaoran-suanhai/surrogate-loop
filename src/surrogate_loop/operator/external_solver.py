@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import subprocess
 from collections.abc import Sequence
@@ -59,6 +60,9 @@ def run_solver_process(
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0.0:
         raise ValueError("外部求解器超时必须是有限正数")
     command = build_solver_command(action, *tuple(arguments))
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
     return subprocess.run(
         command,
         cwd=repo_root,
@@ -69,6 +73,7 @@ def run_solver_process(
         errors="replace",
         timeout=timeout_seconds,
         shell=False,
+        env=environment,
     )
 
 

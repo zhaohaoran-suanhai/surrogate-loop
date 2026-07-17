@@ -30,6 +30,7 @@ from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deepo
 from surrogate_loop.operator.elasticity2d.evaluation import compute_elasticity_metrics
 from surrogate_loop.operator.elasticity2d.pod_rbf import PodRbfBaseline
 from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.reporting import write_smoke_diagnostics
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 from surrogate_loop.operator.elasticity2d.training import (
     predict_dataset,
@@ -217,6 +218,12 @@ def _evaluate_development(
     pod_metrics = compute_elasticity_metrics(
         dataset.fields, pod_prediction, dataset.parameters, dataset.coordinates
     ).to_dict()
+    diagnostic_hashes = write_smoke_diagnostics(
+        run_dir,
+        dataset,
+        prediction,
+        dataset_files.manifest_path,
+    )
     result = ElasticityRunResult(
         run_dir=run_dir,
         status="development_complete",
@@ -236,6 +243,7 @@ def _evaluate_development(
         {
             "status": "complete",
             "result_sha256": sha256_file(run_dir / "development_evaluation.json"),
+            "diagnostic_sha256": diagnostic_hashes,
         },
     )
     return result
@@ -306,12 +314,27 @@ def _stage_hash_matches(stage_path: Path, result_path: Path) -> bool:
         payload = json.loads(stage_path.read_text(encoding="utf-8"))
         return bool(
             isinstance(payload, dict)
-            and set(payload) == {"status", "result_sha256"}
+            and set(payload) == {"status", "result_sha256", "diagnostic_sha256"}
             and payload["status"] == "complete"
             and payload["result_sha256"] == sha256_file(result_path)
+            and _diagnostic_hashes_match(stage_path.parent, payload["diagnostic_sha256"])
         )
     except (OSError, json.JSONDecodeError, RuntimeError):
         return False
+
+
+def _diagnostic_hashes_match(run_dir: Path, payload: object) -> bool:
+    if not isinstance(payload, dict) or set(payload) != {
+        "diagnostics/displacement_comparison.png",
+        "diagnostics/fenicsx_stress_summary.png",
+    }:
+        return False
+    return all(
+        isinstance(digest, str)
+        and len(digest) == 64
+        and sha256_file(run_dir / relative) == digest
+        for relative, digest in payload.items()
+    )
 
 
 def _acceptance_stage_matches(run_dir: Path) -> bool:

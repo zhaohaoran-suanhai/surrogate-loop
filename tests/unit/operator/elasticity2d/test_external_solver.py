@@ -48,6 +48,10 @@ def test_solver_command_is_fixed_and_never_uses_shell(monkeypatch, tmp_path) -> 
     assert kwargs["shell"] is False
     assert kwargs["cwd"] == tmp_path
     assert kwargs["timeout"] == 30.0
+    environment = kwargs["env"]
+    assert isinstance(environment, dict)
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+    assert environment["PYTHONUTF8"] == "1"
 
 
 def test_unknown_solver_action_is_rejected(monkeypatch) -> None:

@@ -38,6 +38,16 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 
 锁定的 Smoke 与 Full 配置均已在 RTX 4060 Laptop GPU 上完成端到端运行。Smoke 留出集在开发校准中用于诊断，因此只作探索性结果；此前未用于调参的 Full 确认性留出集使用 128 个算例，中位相对 L2 误差为 0.731%，状态为 `accepted`。完整指标和复现说明见操作指南。
 
+### 二维线弹性神经算子
+
+第三个闭环使用独立 FEniCSx 0.11 环境生成二维平面应力悬臂梁数据，再由 uv/PyTorch 环境训练 Vector DeepONet：
+
+```text
+(E, nu, P, theta, y0, w) -> (u_x(x, y), u_y(x, y))
+```
+
+已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理。真实微型跨环境测试已打通；正式本机校准和 Smoke 是下一检查点，Full 必须在 Smoke 评审后再次明确确认。
+
 ## 环境要求
 
 - Windows
@@ -45,6 +55,7 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 - uv
 - 标量闭环仅需要 CPU
 - 神经算子闭环使用 PyTorch 2.9.0，CUDA 12.6 优先、CPU 回退
+- 二维弹性数据生成另需 Miniforge、FEniCSx 0.11 和 Visual Studio 2022 C++ Build Tools
 
 ## 快速开始
 
@@ -84,11 +95,23 @@ surrogate-loop operator predict --run-dir runs/示例运行标识 --alpha 0.1 --
 surrogate-loop operator predict --run-dir runs/示例运行标识 --alpha 0.1 --a 1.0 --b 0.1 --nx 129 --nt 101 --output predicted_field.npz
 ```
 
+二维线弹性接口：
+
+```powershell
+uv run surrogate-loop elasticity2d doctor
+uv run surrogate-loop elasticity2d validate --config examples/elasticity_2d_cantilever/calibration.json
+uv run surrogate-loop elasticity2d calibrate --config examples/elasticity_2d_cantilever/calibration.json --output-dir runs/elasticity-calibration
+uv run surrogate-loop elasticity2d run --config examples/elasticity_2d_cantilever/smoke.json --runs-dir runs --request "训练二维悬臂梁位移场代理模型"
+uv run surrogate-loop elasticity2d report --run-dir runs/示例运行标识
+```
+
 例如，用户可以先用自然语言告诉 Codex：
 
 > 使用 gamma 在 -1 到 1 之间的强迫反应 ODE，运行冒烟训练，比较全部候选模型并预测 gamma=0.35 时的 u(1)。
 
 Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smoke.json`，再调用固定 CLI；Python 程序负责全部科学计算和验收，不执行自然语言生成的代码。
+
+同样地，二维弹性第一版由 Codex 把用户确认后的需求写成受审查的白名单 JSON。运行时 CLI 不调用 LLM、不解析任意方程，也不执行自然语言生成的代码。
 
 ## 仓库结构
 
@@ -103,13 +126,17 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 - [标量代理模型闭环设计](docs/2026-07-16-标量代理模型闭环设计.md)
 - [一维热传导神经算子闭环设计](docs/2026-07-16-一维热传导神经算子闭环设计.md)
 - [一维热传导神经算子实施计划](docs/2026-07-16-一维热传导神经算子实施计划.md)
+- [二维线弹性神经算子闭环设计](docs/2026-07-16-二维线弹性神经算子闭环设计.md)
+- [二维线弹性神经算子实施计划](docs/2026-07-16-二维线弹性神经算子实施计划.md)
 - [仓库骨架与基础环境实施计划](docs/2026-07-16-仓库骨架与基础环境实施计划.md)
 - [环境与验证指南](docs/guides/环境与验证.md)
 - [标量闭环操作指南](docs/guides/标量闭环操作指南.md)
 - [一维热传导闭环操作指南](docs/guides/一维热传导闭环操作指南.md)
+- [二维线弹性闭环操作指南](docs/guides/二维线弹性闭环操作指南.md)
 - [第一个标量 ODE 算例](examples/forced_reaction_scalar/README.md)
 - [一维热传导神经算子算例](examples/heat_1d_operator/README.md)
+- [二维悬臂梁线弹性神经算子算例](examples/elasticity_2d_cantilever/README.md)
 
 ## 明确不支持
 
-当前版本不支持任意 PDE、二维或三维 PDE、复杂几何、真实 CFD 求解器、FNO、PINN/PINO、多 GPU、Web UI、外部 LLM API、自动外推或生产部署。
+当前版本不支持任意 PDE、任意二维/三维几何、非线性或三维弹性、真实 CFD 求解器、FNO、PINN/PINO、多 GPU、Web UI、运行时外部 LLM API、自动外推或生产部署。二维 PDE 目前仅支持已注册的平面应力悬臂梁模板。
