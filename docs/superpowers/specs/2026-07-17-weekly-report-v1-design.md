@@ -66,7 +66,9 @@ docs/
 - `docs/README.md`
 - `docs/当前能力与状态.md`
 - `docs/demos/README.md`
+- `docs/demos/二维线弹性演示手册.md`
 - `docs/guides/二维线弹性闭环操作指南.md`
+- `examples/elasticity_2d_cantilever/README.md`
 
 历史设计和实施计划保持不变。稳定文档只记录已经发生且有产物支持的事实。
 
