@@ -10,6 +10,7 @@
 - `src/surrogate_loop/`：可安装、可测试的核心代码。
 - `examples/`：可复现输入配置和中文算例说明，不复制核心代码。
 - `tests/`：按 `unit`、`integration`、`e2e` 分层的自动化测试。
+- `tools/`：仓库维护和跨机迁移工具；不得在其中复制模型训练、求解器或推理核心实现。
 - `runs/`：本地运行产物，不提交生成文件。
 
 ## 强制规则
@@ -44,5 +45,6 @@ uv run pytest
 - 真实求解器 E2E 证明跨环境链路；calibration 证明数值与物理门禁；Smoke 是开发证据；Full 是一次性确认性验收。
 - 二维线弹性 Full 已完成 calibration、Smoke 和一次确认性验收；可信运行 `runs/elasticity-full-ba8ff8e584d9/` 状态为 `accepted`。
 - 已有 accepted Full 可以只读报告和域内推理；重新训练、新建 Full 身份或再次消费新的 sealed-test 仍须用户明确确认。
+- Windows 迁移工具的 `FullChain` 只验证环境、真实微型 E2E 和已有 accepted 推理；它不是新的 Full 验收，不授权创建 Full 身份或消费 sealed-test。
 - 不放宽门槛、不绕过摘要、不把失败样本静默删除。
 - 从头运行发生恢复或阶段复用时，必须明确说明复用了什么，不能称为完全从零运行。

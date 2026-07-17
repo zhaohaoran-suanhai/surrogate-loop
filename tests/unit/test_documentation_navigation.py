@@ -20,6 +20,8 @@ def test_agent_documentation_entrypoints_exist() -> None:
         "docs/demos/Agent接管验收清单.md",
         "docs/周报/README.md",
         "docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md",
+        "docs/guides/Windows跨机迁移指南.md",
+        "tools/windows-migration/README.md",
     )
     assert [path for path in expected if not (ROOT / path).is_file()] == []
 
@@ -203,12 +205,44 @@ def test_agent_rehearsal_covers_demo_run_and_new_pde() -> None:
         assert required in content
 
 
+def test_windows_migration_docs_define_safe_full_chain_contract() -> None:
+    guide = _read("docs/guides/Windows跨机迁移指南.md")
+    tools = _read("tools/windows-migration/README.md")
+    for required in (
+        "Windows 11 x64",
+        "NVIDIA GPU",
+        "Test-Prerequisites.ps1",
+        "Initialize-Environments.ps1",
+        "Test-Installation.ps1",
+        "Export-AcceptedRun.ps1",
+        "Import-AcceptedRun.ps1",
+        "FullChain",
+        "accepted",
+        "SHA-256",
+    ):
+        assert required in guide
+        assert required in tools
+    assert "不会自动安装" in guide
+    assert "不会启动 calibration、Smoke 或 Full" in guide
+    assert "SHA-256 不等于数字签名" in guide
+
+
+def test_root_and_document_map_link_windows_migration_guide() -> None:
+    root = _read("README.md")
+    document_map = _read("docs/README.md")
+    environment = _read("docs/guides/环境与验证.md")
+    assert "docs/guides/Windows跨机迁移指南.md" in root
+    assert "Windows跨机迁移指南.md" in document_map
+    assert "Windows跨机迁移指南.md" in environment
+
+
 def test_local_markdown_links_resolve() -> None:
     broken: list[str] = []
     documents = [
         ROOT / "AGENTS.md",
         ROOT / "README.md",
         *sorted((ROOT / "docs").rglob("*.md")),
+        *sorted((ROOT / "tools").rglob("*.md")),
     ]
     for document in documents:
         in_fence = False

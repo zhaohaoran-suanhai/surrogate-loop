@@ -1354,7 +1354,7 @@ Expected: FAIL，因为两个新 README/指南和现有入口尚未增加。
 - Windows 迁移工具的 `FullChain` 只验证环境、真实微型 E2E 和已有 accepted 推理；它不是新的 Full 验收，不授权创建 Full 身份或消费 sealed-test。
 ```
 
-根 README 增加“Windows 跨机迁移”小节，链接 `[Windows 跨机迁移指南](docs/guides/Windows跨机迁移指南.md)` 与 `[工具速查](tools/windows-migration/README.md)`。说明当前支持 Windows 11 x64 + NVIDIA GPU，系统依赖人工安装，工具负责检查、环境创建、分级验证和 accepted 传输。
+根 README 增加“Windows 跨机迁移”小节，链接 `[Windows 跨机迁移指南](../../guides/Windows跨机迁移指南.md)` 与 `[工具速查](../../../tools/windows-migration/README.md)`。说明当前支持 Windows 11 x64 + NVIDIA GPU，系统依赖人工安装，工具负责检查、环境创建、分级验证和 accepted 传输。
 
 `docs/README.md` 在“运行已有闭环”和“稳定文档”加入迁移指南；`docs/guides/环境与验证.md` 在开头说明本页适合当前机器，另一台 Windows 电脑应从迁移指南开始，并删除过期的“73 项测试”固定计数或改为“以当前 pytest 输出为准”。
 

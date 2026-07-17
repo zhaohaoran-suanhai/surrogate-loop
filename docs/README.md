@@ -25,6 +25,7 @@
 - [标量 ODE 闭环](guides/标量闭环操作指南.md)
 - [一维热传导闭环](guides/一维热传导闭环操作指南.md)
 - [二维线弹性闭环](guides/二维线弹性闭环操作指南.md)
+- [Windows 跨机迁移指南](guides/Windows跨机迁移指南.md)：在另一台 Windows 11 + NVIDIA GPU 电脑上恢复完整链路或导入 accepted 运行。
 
 先执行配置校验，再根据指南判断是 Smoke、Full 还是只读报告。二维线弹性 Full 必须重新获得用户明确授权。
 
@@ -41,6 +42,7 @@
 - [项目周报](周报/README.md)
 - [第 01 期代理模型训练闭环周报](周报/2026-07-17-第01期-代理模型训练闭环周报.md)
 - [环境与验证](guides/环境与验证.md)
+- [Windows 跨机迁移指南](guides/Windows跨机迁移指南.md)
 - [Agent 协作指南](guides/Agent协作指南.md)
 - [演示入口](demos/README.md)
 - [二维线弹性演示手册](demos/二维线弹性演示手册.md)

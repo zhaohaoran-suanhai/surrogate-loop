@@ -133,6 +133,15 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 
 二维线弹性是当前推荐演示主线，可从[二维线弹性演示手册](docs/demos/二维线弹性演示手册.md)选择快速展示或从头运行；详细运行合同见[二维线弹性闭环操作指南](docs/guides/二维线弹性闭环操作指南.md)。
 
+## Windows 跨机迁移
+
+当前迁移套件正式支持另一台 Windows 11 x64 + NVIDIA GPU 电脑。Git、uv、Miniforge、Visual Studio Build Tools、Windows SDK 和 NVIDIA 驱动仍由使用者人工安装；工具负责只读前置检查、uv/Conda 双环境计划与初始化、分级验证，以及三个 accepted 闭环运行的安全导出和导入。
+
+- [Windows 跨机迁移指南](docs/guides/Windows跨机迁移指南.md)：完整源电脑/目标电脑步骤、故障处理与证据边界。
+- [Windows 迁移工具速查](tools/windows-migration/README.md)：脚本参数、最短命令链和退出码。
+
+迁移工具的 `FullChain` 不会启动 calibration、Smoke、正式 Full 或 sealed-test；重新训练和新的确认性验收仍需单独授权。
+
 ## 文档
 
 - [标量代理模型闭环设计](docs/2026-07-16-标量代理模型闭环设计.md)
@@ -142,6 +151,7 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 - [二维线弹性神经算子实施计划](docs/2026-07-16-二维线弹性神经算子实施计划.md)
 - [仓库骨架与基础环境实施计划](docs/2026-07-16-仓库骨架与基础环境实施计划.md)
 - [环境与验证指南](docs/guides/环境与验证.md)
+- [Windows 跨机迁移指南](docs/guides/Windows跨机迁移指南.md)
 - [标量闭环操作指南](docs/guides/标量闭环操作指南.md)
 - [一维热传导闭环操作指南](docs/guides/一维热传导闭环操作指南.md)
 - [二维线弹性闭环操作指南](docs/guides/二维线弹性闭环操作指南.md)
