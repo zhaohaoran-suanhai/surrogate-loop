@@ -55,20 +55,25 @@ def test_vector_deeponet_rejects_nonpositive_dimensions(
 
 
 def test_elasticity_builder_uses_structured_spec() -> None:
-    spec = VectorDeepONetSpec(hidden_width=24, hidden_layers=3, latent_dim=10)
+    spec = VectorDeepONetSpec(
+        architecture="directional_linear_v2",
+        hidden_width=24,
+        hidden_layers=3,
+        latent_dim=10,
+    )
 
     model = build_elasticity_deeponet(spec)
 
-    assert model.branch_input_dim == 5
+    assert model.branch_input_dim == 3
     assert model.trunk_input_dim == 2
-    assert model.output_dim == 2
+    assert model.output_dim == 4
     assert model.hidden_width == 24
     assert model.hidden_layers == 3
     assert model.latent_dim == 10
 
 
 def test_elasticity_constraints_enforce_clamp_and_p_over_e() -> None:
-    raw = torch.ones(1, 2, 2)
+    raw = torch.ones(1, 2, 4)
     coordinates = torch.tensor([[0.0, 0.5], [4.0, 0.5]])
     base = torch.tensor([[2.0, 0.3, 0.005, 0.0, 0.5, 0.1]])
     doubled_load = base.clone()
@@ -87,6 +92,29 @@ def test_elasticity_constraints_enforce_clamp_and_p_over_e() -> None:
         apply_elasticity_constraints(raw, doubled_modulus, coordinates)[:, 1],
         0.5 * base_output[:, 1],
     )
+
+
+def test_directional_constraints_exactly_superpose_unit_load_bases() -> None:
+    raw = torch.tensor([[[2.0, 3.0, 5.0, 7.0]]])
+    coordinates = torch.tensor([[4.0, 0.5]])
+
+    def predict(angle: float) -> torch.Tensor:
+        parameters = torch.tensor([[2.0, 0.3, 0.01, angle, 0.5, 0.1]])
+        return apply_elasticity_constraints(raw, parameters, coordinates)[0, 0]
+
+    scale = 0.01 / 2.0
+    torch.testing.assert_close(predict(0.0), scale * torch.tensor([2.0, 3.0]))
+    torch.testing.assert_close(
+        predict(torch.pi / 2), scale * torch.tensor([5.0, 7.0]), atol=1e-8, rtol=0.0
+    )
+
+    angle = 0.37
+    expected = scale * (
+        torch.cos(torch.tensor(angle)) * torch.tensor([2.0, 3.0])
+        + torch.sin(torch.tensor(angle)) * torch.tensor([5.0, 7.0])
+    )
+    torch.testing.assert_close(predict(angle), expected)
+    torch.testing.assert_close(predict(angle + torch.pi), -expected, atol=1e-8, rtol=0.0)
 
 
 @pytest.mark.parametrize(
@@ -109,9 +137,10 @@ def test_vector_deeponet_rejects_invalid_inputs(branch, trunk, message: str) -> 
     ("raw", "parameters", "coordinates", "message"),
     [
         (torch.ones(2, 2), torch.ones(1, 6), torch.ones(2, 2), "输出"),
-        (torch.ones(1, 2, 2), torch.ones(1, 5), torch.ones(2, 2), "参数"),
-        (torch.ones(1, 2, 2), torch.ones(1, 6), torch.ones(2, 3), "坐标"),
-        (torch.ones(2, 2, 2), torch.ones(1, 6), torch.ones(2, 2), "形状"),
+        (torch.ones(1, 2, 2), torch.ones(1, 6), torch.ones(2, 2), "方向响应基"),
+        (torch.ones(1, 2, 4), torch.ones(1, 5), torch.ones(2, 2), "参数"),
+        (torch.ones(1, 2, 4), torch.ones(1, 6), torch.ones(2, 3), "坐标"),
+        (torch.ones(2, 2, 4), torch.ones(1, 6), torch.ones(2, 2), "形状"),
     ],
 )
 def test_elasticity_constraints_reject_invalid_shapes(
