@@ -12,6 +12,8 @@ def test_required_repository_paths_exist() -> None:
         "docs/2026-07-16-二维线弹性神经算子闭环设计.md",
         "docs/2026-07-16-二维线弹性神经算子实施计划.md",
         "docs/2026-07-16-仓库骨架与基础环境实施计划.md",
+        "docs/README.md",
+        "docs/当前能力与状态.md",
         "docs/architecture/README.md",
         "docs/guides/环境与验证.md",
         "src/surrogate_loop/__init__.py",
