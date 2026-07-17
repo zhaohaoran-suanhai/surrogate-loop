@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -137,6 +138,144 @@ def test_validated_dataset_is_reused_only_with_matching_solver_versions(
     repaired = generate_or_reuse_dataset(spec, plan, tmp_path, ROOT)
     assert calls == 2
     assert sha256_file(repaired.sealed_test_path) == repaired.sealed_test_sha256
+
+
+def test_smoke_dataset_can_be_copied_from_verified_source_without_solver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    spec = load_elasticity_spec(EXAMPLES / "smoke.json")
+    plan = build_sample_plan(spec)
+    source, manifest = _write_source_run(tmp_path, spec, plan)
+    monkeypatch.setattr(
+        external_solver,
+        "run_solver_process",
+        lambda *args, **kwargs: pytest.fail("复用模式不得调用 FEniCSx"),
+    )
+
+    target = tmp_path / "target"
+    files = generate_or_reuse_dataset(
+        spec, plan, target, ROOT, reuse_data_from=source
+    )
+
+    assert files.development_sha256 == sha256_file(
+        manifest.parent / "development.npz"
+    )
+    evidence = json.loads((target / "dataset_reuse.json").read_text(encoding="utf-8"))
+    assert evidence["schema_version"] == 1
+    assert evidence["source_run_dir"] == str(source.resolve())
+    assert evidence["source_request_sha256"] == sha256_file(source / "request.json")
+    assert evidence["source_manifest_sha256"] == sha256_file(manifest)
+    assert evidence["target_job_sha256"] == sha256_file(target / "solver_job.json")
+
+
+def test_full_dataset_rejects_reuse_without_solver_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    smoke = load_elasticity_spec(EXAMPLES / "smoke.json")
+    source, _ = _write_source_run(tmp_path, smoke, build_sample_plan(smoke))
+    full = load_elasticity_spec(EXAMPLES / "full.json")
+    monkeypatch.setattr(
+        external_solver,
+        "run_solver_process",
+        lambda *args, **kwargs: pytest.fail("拒绝复用后不得回退 FEniCSx"),
+    )
+
+    with pytest.raises(ValueError, match="Smoke"):
+        generate_or_reuse_dataset(
+            full,
+            build_sample_plan(full),
+            tmp_path / "target",
+            ROOT,
+            reuse_data_from=source,
+        )
+
+
+@pytest.mark.parametrize("damage", ["failed_state", "request_identity", "npz"])
+def test_invalid_smoke_reuse_source_is_rejected_without_solver_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    spec = load_elasticity_spec(EXAMPLES / "smoke.json")
+    plan = build_sample_plan(spec)
+    source, manifest = _write_source_run(tmp_path, spec, plan)
+    if damage == "failed_state":
+        (source / "status.json").write_text('{"state":"failed"}', encoding="utf-8")
+    elif damage == "request_identity":
+        request = json.loads((source / "request.json").read_text(encoding="utf-8"))
+        request["identity_sha256"] = "0" * 64
+        (source / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    else:
+        development = manifest.parent / "development.npz"
+        development.write_bytes(development.read_bytes() + b"tampered")
+    monkeypatch.setattr(
+        external_solver,
+        "run_solver_process",
+        lambda *args, **kwargs: pytest.fail("拒绝复用后不得回退 FEniCSx"),
+    )
+
+    with pytest.raises(RuntimeError):
+        generate_or_reuse_dataset(
+            spec,
+            plan,
+            tmp_path / "target",
+            ROOT,
+            reuse_data_from=source,
+        )
+
+
+@pytest.mark.parametrize("target_kind", ["same", "nested"])
+def test_reuse_rejects_source_target_overlap_without_modifying_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    spec = load_elasticity_spec(EXAMPLES / "smoke.json")
+    plan = build_sample_plan(spec)
+    source, _ = _write_source_run(tmp_path, spec, plan)
+    before = _tree_hashes(source)
+    target = source if target_kind == "same" else source / "nested-runs" / "target"
+    monkeypatch.setattr(
+        external_solver,
+        "run_solver_process",
+        lambda *args, **kwargs: pytest.fail("路径重叠不得调用 FEniCSx"),
+    )
+
+    with pytest.raises(ValueError, match="重叠"):
+        generate_or_reuse_dataset(
+            spec,
+            plan,
+            target,
+            ROOT,
+            reuse_data_from=source,
+        )
+
+    assert _tree_hashes(source) == before
+
+
+def _tree_hashes(root: Path) -> dict[str, str]:
+    return {
+        str(path.relative_to(root)): sha256_file(path)
+        for path in sorted(item for item in root.rglob("*") if item.is_file())
+    }
+
+
+def _write_source_run(tmp_path: Path, spec, plan) -> tuple[Path, Path]:
+    identity = {"request": "old smoke", "spec": spec.model_dump(mode="json")}
+    canonical = json.dumps(
+        identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()
+    source = tmp_path / f"elasticity-smoke-{digest[:12]}"
+    source.mkdir()
+    manifest = _write_fake_solver_output(source / "solver_output", spec, plan)
+    identity["identity_sha256"] = digest
+    (source / "request.json").write_text(
+        json.dumps(identity, ensure_ascii=False), encoding="utf-8"
+    )
+    (source / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
+    return source, manifest
 
 
 def _write_fake_solver_output(output_dir, spec, plan) -> Path:

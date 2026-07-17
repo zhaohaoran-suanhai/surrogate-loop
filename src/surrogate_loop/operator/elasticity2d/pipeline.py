@@ -28,9 +28,15 @@ from surrogate_loop.operator.elasticity2d.dataset import (
     load_development_partitions,
 )
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
-from surrogate_loop.operator.elasticity2d.evaluation import compute_elasticity_metrics
+from surrogate_loop.operator.elasticity2d.development_report import (
+    read_verified_development_report,
+)
+from surrogate_loop.operator.elasticity2d.evaluation import (
+    compute_directional_error_summary,
+    compute_elasticity_metrics,
+)
 from surrogate_loop.operator.elasticity2d.pod_rbf import PodRbfBaseline
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.elasticity2d.reporting import write_smoke_diagnostics
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 from surrogate_loop.operator.elasticity2d.training import (
@@ -54,13 +60,17 @@ def run_elasticity_pipeline(
     config_path: Path,
     runs_dir: Path,
     request: str,
+    *,
+    reuse_data_from: Path | None = None,
 ) -> ElasticityRunResult:
     if not request.strip():
         raise ValueError("二维弹性运行请求不能为空")
     spec = load_elasticity_spec(config_path)
     if spec.mode == "calibration":
         raise ValueError("calibration 配置必须通过专用校准入口运行")
-    run_dir = _resolve_run_directory(runs_dir, spec, request)
+    if reuse_data_from is not None and spec.mode != "smoke":
+        raise ValueError("只有 Smoke 运行可以复用已有 FEniCSx 数据")
+    run_dir = _resolve_run_directory(runs_dir, spec, request, reuse_data_from)
     resumed = _completed_result(run_dir, spec)
     if resumed is not None:
         return resumed
@@ -71,7 +81,11 @@ def run_elasticity_pipeline(
         sample_plan = build_sample_plan(spec)
         repo_root = Path(__file__).resolve().parents[4]
         dataset_files = generate_or_reuse_dataset(
-            spec, sample_plan, run_dir, repo_root
+            spec,
+            sample_plan,
+            run_dir,
+            repo_root,
+            reuse_data_from=reuse_data_from,
         )
         state = read_run_state(run_dir)
         if state is ElasticityRunState.CREATED:
@@ -85,7 +99,7 @@ def run_elasticity_pipeline(
         if state in {ElasticityRunState.SOLVER_ACCEPTED, ElasticityRunState.TRAINED}:
             partitions = load_development_partitions(dataset_files, sample_plan)
             normalization = FieldNormalization.fit(
-                elasticity_features(partitions.train.parameters),
+                elasticity_basis_features(partitions.train.parameters),
                 partitions.train.coordinates,
                 partitions.train.fields,
             )
@@ -149,16 +163,33 @@ def _resolve_run_directory(
     runs_dir: Path,
     spec: ElasticityRunSpec,
     request: str,
+    reuse_data_from: Path | None = None,
 ) -> Path:
     identity = {
         "request": request,
         "spec": spec.model_dump(mode="json"),
     }
+    if reuse_data_from is not None:
+        source = reuse_data_from.resolve()
+        destination_root = runs_dir.resolve()
+        if destination_root == source or destination_root.is_relative_to(source):
+            raise ValueError("复用目标目录不得与源运行目录重叠")
+        identity.update(
+            {
+                "reuse_data_from": str(source),
+                "reuse_manifest_sha256": sha256_file(
+                    source / "solver_output" / "datasets" / "dataset_manifest.json"
+                ),
+                "reuse_source_request_sha256": sha256_file(source / "request.json"),
+            }
+        )
     canonical = json.dumps(
         identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     digest = hashlib.sha256(canonical).hexdigest()
     run_dir = runs_dir.resolve() / f"elasticity-{spec.mode}-{digest[:12]}"
+    if reuse_data_from is not None and _paths_overlap(run_dir, reuse_data_from):
+        raise ValueError("复用目标目录不得与源运行目录重叠")
     identity_payload = {**identity, "identity_sha256": digest}
     if not run_dir.exists():
         run_dir.mkdir(parents=True)
@@ -174,6 +205,12 @@ def _resolve_run_directory(
     if read_run_state(run_dir) is ElasticityRunState.FAILED:
         raise RuntimeError("failed 运行不得以相同身份恢复")
     return run_dir
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    left = first.resolve()
+    right = second.resolve()
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
 
 
 def _completed_result(
@@ -216,6 +253,9 @@ def _evaluate_development(
     deeponet_metrics = compute_elasticity_metrics(
         dataset.fields, prediction, dataset.parameters, dataset.coordinates
     ).to_dict()
+    directional_metrics = compute_directional_error_summary(
+        dataset.fields, prediction, dataset.parameters
+    )
     pod_prediction = baseline.predict(dataset.parameters)
     pod_metrics = compute_elasticity_metrics(
         dataset.fields, pod_prediction, dataset.parameters, dataset.coordinates
@@ -244,6 +284,7 @@ def _evaluate_development(
         "speedup": fenicsx_median / neural_seconds,
     }
     training = _training_summary(selected)
+    data_provenance = _data_provenance(run_dir)
     result = ElasticityRunResult(
         run_dir=run_dir,
         status="development_complete",
@@ -253,8 +294,11 @@ def _evaluate_development(
     _write_json_atomic(
         run_dir / "development_evaluation.json",
         {
-            "schema_version": 5,
+            "schema_version": 6,
             "status": result.status,
+            "model_architecture": spec.model.architecture,
+            "data_provenance": data_provenance,
+            "directional_metrics": directional_metrics,
             "deeponet_metrics": deeponet_metrics,
             "pod_rbf_metrics": pod_metrics,
             "training": training,
@@ -264,10 +308,15 @@ def _evaluate_development(
     _write_json_atomic(
         run_dir / "development_stage.json",
         {
-            "schema_version": 5,
+            "schema_version": 6,
             "status": "complete",
             "result_sha256": sha256_file(run_dir / "development_evaluation.json"),
             "diagnostic_sha256": diagnostic_hashes,
+            "dataset_provenance_sha256": (
+                sha256_file(run_dir / "dataset_reuse.json")
+                if (run_dir / "dataset_reuse.json").is_file()
+                else None
+            ),
         },
     )
     return result
@@ -299,6 +348,19 @@ def _training_summary(selected: SelectedTraining) -> dict[str, object]:
             for candidate in selected.candidates
         ],
     }
+
+
+def _data_provenance(run_dir: Path) -> dict[str, object]:
+    path = run_dir / "dataset_reuse.json"
+    if not path.exists():
+        return {"mode": "generated"}
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("二维弹性数据复用来源证据无效") from error
+    if not isinstance(evidence, dict):
+        raise RuntimeError("二维弹性数据复用来源证据无效")
+    return {"mode": "reused", "evidence": evidence}
 
 
 def _solver_timing_summary(
@@ -390,32 +452,16 @@ def _read_result(path: Path, run_dir: Path) -> ElasticityRunResult:
 
 def _stage_hash_matches(stage_path: Path, result_path: Path) -> bool:
     try:
-        payload = json.loads(stage_path.read_text(encoding="utf-8"))
-        return bool(
-            isinstance(payload, dict)
-            and set(payload)
-            == {"schema_version", "status", "result_sha256", "diagnostic_sha256"}
-            and payload["schema_version"] == 5
-            and payload["status"] == "complete"
-            and payload["result_sha256"] == sha256_file(result_path)
-            and _diagnostic_hashes_match(stage_path.parent, payload["diagnostic_sha256"])
-        )
-    except (OSError, json.JSONDecodeError, RuntimeError):
+        run_dir = stage_path.parent.resolve()
+        if (
+            stage_path.resolve() != run_dir / "development_stage.json"
+            or result_path.resolve() != run_dir / "development_evaluation.json"
+        ):
+            return False
+        read_verified_development_report(run_dir)
+        return True
+    except RuntimeError:
         return False
-
-
-def _diagnostic_hashes_match(run_dir: Path, payload: object) -> bool:
-    if not isinstance(payload, dict) or set(payload) != {
-        "diagnostics/displacement_comparison.png",
-        "diagnostics/fenicsx_stress_summary.png",
-    }:
-        return False
-    return all(
-        isinstance(digest, str)
-        and len(digest) == 64
-        and sha256_file(run_dir / relative) == digest
-        for relative, digest in payload.items()
-    )
 
 
 def _acceptance_stage_matches(run_dir: Path) -> bool:

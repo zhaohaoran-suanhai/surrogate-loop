@@ -6,10 +6,12 @@ import pytest
 
 from surrogate_loop.operator.elasticity2d.config import load_elasticity_spec
 from surrogate_loop.operator.elasticity2d.evaluation import (
+    compute_directional_error_summary,
     compute_elasticity_metrics,
     elasticity_is_acceptable,
 )
 from surrogate_loop.operator.elasticity2d.problem import (
+    elasticity_basis_features,
     elasticity_features,
     traction_density,
 )
@@ -50,6 +52,22 @@ def test_angle_features_are_periodic() -> None:
     assert elasticity_features(left).shape == (1, 5)
 
 
+def test_elasticity_basis_features_exclude_load_direction_and_scale() -> None:
+    first = np.array([[2.0, 0.31, 0.004, 0.2, 0.45, 0.11]])
+    second = np.array([[5.0, 0.31, 0.009, -2.4, 0.45, 0.11]])
+
+    np.testing.assert_allclose(
+        elasticity_basis_features(first),
+        elasticity_basis_features(second),
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        elasticity_basis_features(first),
+        np.array([[0.31, 0.45, 0.11]]),
+    )
+
+
 @pytest.mark.parametrize(("center", "width"), [(0.2, 0.08), (0.5, 0.12), (0.8, 0.2)])
 def test_traction_density_integrates_to_one(center: float, width: float) -> None:
     y = np.linspace(0.0, 1.0, 10001)
@@ -85,6 +103,31 @@ def test_uniform_field_scaling_has_matching_relative_metrics() -> None:
     np.testing.assert_allclose(metrics.p95_tip_error, 0.1)
     np.testing.assert_allclose(metrics.p95_compliance_error, 0.1)
     assert metrics.clamp_max_absolute_error == 0.0
+
+
+def test_directional_error_summary_uses_fixed_angle_groups() -> None:
+    angles = np.array([0.0, 0.2, 0.7, 1.0, 1.4, np.pi / 2])
+    parameters = np.column_stack(
+        (
+            np.full(6, 2.0),
+            np.full(6, 0.3),
+            np.full(6, 0.005),
+            angles,
+            np.full(6, 0.5),
+            np.full(6, 0.1),
+        )
+    )
+    reference = np.ones((6, 3, 2), dtype=np.float64)
+    prediction = reference * np.linspace(1.0, 1.5, 6)[:, None, None]
+
+    summary = compute_directional_error_summary(reference, prediction, parameters)
+
+    assert set(summary) == {"near_horizontal", "oblique", "near_vertical"}
+    assert summary["near_horizontal"]["condition"] == "abs_sin_theta < 0.35"
+    assert summary["oblique"]["condition"] == "0.35 <= abs_sin_theta < 0.85"
+    assert summary["near_vertical"]["condition"] == "abs_sin_theta >= 0.85"
+    assert sum(group["count"] for group in summary.values()) == 6
+    assert all(group["count"] == 2 for group in summary.values())
 
 
 def test_acceptance_requires_every_metric_and_speedup() -> None:

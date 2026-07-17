@@ -67,7 +67,6 @@ def compute_elasticity_metrics(
     compliance_error = np.abs(prediction_compliance - reference_compliance) / np.maximum(
         np.abs(reference_compliance), 1e-12
     )
-
     left_indices, _ = _boundary_indices(coordinates, 0.0)
     clamp_error = float(np.max(np.abs(prediction[:, left_indices, :])))
     return ElasticityMetrics(
@@ -79,6 +78,62 @@ def compute_elasticity_metrics(
         clamp_max_absolute_error=clamp_error,
     )
 
+
+def compute_directional_error_summary(
+    reference: NDArray[np.float64],
+    prediction: NDArray[np.float64],
+    parameters: NDArray[np.float64],
+) -> dict[str, dict[str, object]]:
+    reference = np.asarray(reference, dtype=np.float64)
+    prediction = np.asarray(prediction, dtype=np.float64)
+    parameters = validate_parameter_array(parameters)
+    if (
+        reference.shape != prediction.shape
+        or reference.ndim != 3
+        or reference.shape[0] != parameters.shape[0]
+        or reference.shape[2] != 2
+    ):
+        raise ValueError("方向误差摘要要求同形状的逐样本二维向量场")
+    if not np.isfinite(reference).all() or not np.isfinite(prediction).all():
+        raise ValueError("方向误差摘要的参考场和预测场必须全部有限")
+
+    relative_l2 = _case_relative_l2(reference, prediction)
+    abs_sin_theta = np.abs(np.sin(parameters[:, 3]))
+    groups = (
+        ("near_horizontal", "abs_sin_theta < 0.35", abs_sin_theta < 0.35),
+        (
+            "oblique",
+            "0.35 <= abs_sin_theta < 0.85",
+            (abs_sin_theta >= 0.35) & (abs_sin_theta < 0.85),
+        ),
+        ("near_vertical", "abs_sin_theta >= 0.85", abs_sin_theta >= 0.85),
+    )
+    summary: dict[str, dict[str, object]] = {}
+    for name, condition, mask in groups:
+        values = relative_l2[mask]
+        summary[name] = {
+            "condition": condition,
+            "count": int(values.size),
+            "median_relative_l2": (
+                None if values.size == 0 else float(np.median(values))
+            ),
+            "p95_relative_l2": (
+                None if values.size == 0 else float(np.quantile(values, 0.95))
+            ),
+            "worst_relative_l2": (
+                None if values.size == 0 else float(np.max(values))
+            ),
+        }
+    return summary
+
+
+def _case_relative_l2(
+    reference: NDArray[np.float64], prediction: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    difference = (prediction - reference).reshape(reference.shape[0], -1)
+    target = reference.reshape(reference.shape[0], -1)
+    denominator = np.maximum(np.linalg.norm(target, axis=1), 1e-12)
+    return np.linalg.norm(difference, axis=1) / denominator
 
 def elasticity_is_acceptable(
     metrics: ElasticityMetrics,

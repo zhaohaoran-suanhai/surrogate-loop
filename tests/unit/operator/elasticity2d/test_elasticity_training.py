@@ -13,7 +13,7 @@ from surrogate_loop.operator.elasticity2d.config import (
     load_elasticity_spec,
 )
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.elasticity2d.training import (
     TrainingFailure,
     predict_dataset,
@@ -73,17 +73,26 @@ def _partitions() -> TrainingOnlyPartitions:
             (young_modulus, poisson_ratio, load, angle, center, width)
         )
         clamp = coordinates[:, 0] / 4.0
-        shape_x = (
-            0.5
-            + poisson_ratio[:, None]
-            + 0.2 * np.cos(angle)[:, None] * coordinates[:, 1]
+        horizontal = np.stack(
+            (
+                0.5
+                + poisson_ratio[:, None]
+                + 0.2 * coordinates[:, 1][None, :],
+                0.1 * (coordinates[:, 1][None, :] - center[:, None]),
+            ),
+            axis=-1,
         )
-        shape_y = (
-            np.sin(angle)[:, None]
-            + 0.3 * (coordinates[:, 1][None, :] - center[:, None])
-            + width[:, None]
+        vertical = np.stack(
+            (
+                0.15 * (coordinates[:, 1][None, :] - center[:, None]),
+                1.0 + width[:, None] + 0.1 * coordinates[:, 0][None, :],
+            ),
+            axis=-1,
         )
-        fields = np.stack((shape_x, shape_y), axis=-1)
+        fields = (
+            np.cos(angle)[:, None, None] * horizontal
+            + np.sin(angle)[:, None, None] * vertical
+        )
         fields *= (load / young_modulus)[:, None, None] * clamp[None, :, None]
         return FieldDataset(
             sample_ids=np.array(
@@ -103,7 +112,7 @@ def _partitions() -> TrainingOnlyPartitions:
 
 def _normalization(partitions: TrainingOnlyPartitions) -> FieldNormalization:
     return FieldNormalization.fit(
-        elasticity_features(partitions.train.parameters),
+        elasticity_basis_features(partitions.train.parameters),
         partitions.train.coordinates,
         partitions.train.fields,
     )
@@ -204,7 +213,12 @@ def test_non_finite_loss_preserves_diagnostic_checkpoint(monkeypatch) -> None:
     monkeypatch.setattr(
         training_module,
         "apply_elasticity_constraints",
-        lambda raw, *_: torch.full_like(raw, float("nan")),
+        lambda raw, *_: torch.full(
+            (*raw.shape[:-1], 2),
+            float("nan"),
+            dtype=raw.dtype,
+            device=raw.device,
+        ),
     )
 
     with pytest.raises(TrainingFailure) as captured:

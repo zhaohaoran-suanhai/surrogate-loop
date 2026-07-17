@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from surrogate_loop.operator.elasticity2d.dataset import DatasetFiles
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
 from surrogate_loop.operator.elasticity2d.inference import read_elasticity_report
 from surrogate_loop.operator.elasticity2d.pod_rbf import PodRbfBaseline
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 from surrogate_loop.operator.elasticity2d.training import (
     SelectedTraining,
@@ -44,8 +45,8 @@ def test_neural_speed_benchmark_measures_one_sample(monkeypatch) -> None:
         diagnostics={},
     )
     normalization = FieldNormalization(
-        feature_mean=np.zeros(5),
-        feature_std=np.ones(5),
+        feature_mean=np.zeros(3),
+        feature_std=np.ones(3),
         coordinate_mean=np.zeros(2),
         coordinate_std=np.ones(2),
         target_rms=np.ones(2),
@@ -182,6 +183,15 @@ def test_freeze_run_hashes_scientific_identity_and_selected_checkpoint(tmp_path)
     verified = verify_freeze_manifest(run_dir)
     assert verified == manifest
     assert all(sha256_file(run_dir / name) == digest for name, digest in manifest.files.items())
+    assert json.loads((run_dir / "network.json").read_text(encoding="utf-8")) == {
+        "architecture": "directional_linear_v2",
+        "branch_input_dim": 3,
+        "trunk_input_dim": 2,
+        "output_dim": 4,
+        "hidden_width": inputs["spec"].model.hidden_width,
+        "hidden_layers": inputs["spec"].model.hidden_layers,
+        "latent_dim": inputs["spec"].model.latent_dim,
+    }
 
 
 def test_freeze_manifest_rejects_tampered_hashed_artifact(tmp_path) -> None:
@@ -241,9 +251,10 @@ def test_sealed_tampering_fails_run_without_second_chance(tmp_path, monkeypatch)
 def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypatch) -> None:
     generate_calls = 0
 
-    def fake_generate(spec, sample_plan, run_dir, repo_root):
+    def fake_generate(spec, sample_plan, run_dir, repo_root, *, reuse_data_from=None):
         nonlocal generate_calls
         generate_calls += 1
+        assert reuse_data_from is None
         return _write_protocol_dataset(run_dir, sample_plan)
 
     def fake_train(spec, partitions, normalization, device):
@@ -288,6 +299,14 @@ def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypa
     state, report = read_elasticity_report(first.run_dir)
     assert state is ElasticityRunState.TRAINED
     assert report["status"] == "development_complete"
+    assert report["schema_version"] == 6
+    assert report["model_architecture"] == "directional_linear_v2"
+    assert set(report["directional_metrics"]) == {
+        "near_horizontal",
+        "oblique",
+        "near_vertical",
+    }
+    assert report["data_provenance"] == {"mode": "generated"}
     assert report["training"]["selected_seed"] == 20260716
     assert report["timing"]["speedup"] > 0.0
 
@@ -298,6 +317,221 @@ def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypa
     )
     assert recovered == first
     assert generate_calls == 2
+
+    (first.run_dir / "dataset_reuse.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="完整性|来源"):
+        read_elasticity_report(first.run_dir)
+
+
+def test_legacy_schema_5_smoke_report_remains_readable(tmp_path) -> None:
+    legacy_spec = json.loads(
+        (ROOT / "examples/elasticity_2d_cantilever/smoke.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    legacy_spec["model"].pop("architecture")
+    run_dir = _write_request_identity(tmp_path, legacy_spec)
+    diagnostics = run_dir / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
+    displacement = diagnostics / "displacement_comparison.png"
+    stress = diagnostics / "fenicsx_stress_summary.png"
+    displacement.write_bytes(b"displacement")
+    stress.write_bytes(b"stress")
+    report = {
+        "schema_version": 5,
+        "status": "development_complete",
+        "deeponet_metrics": {"median_relative_l2": 0.01},
+        "pod_rbf_metrics": {"median_relative_l2": 0.02},
+        "training": {},
+        "timing": {},
+    }
+    report_path = run_dir / "development_evaluation.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    stage = {
+        "schema_version": 5,
+        "status": "complete",
+        "result_sha256": sha256_file(report_path),
+        "diagnostic_sha256": {
+            "diagnostics/displacement_comparison.png": sha256_file(displacement),
+            "diagnostics/fenicsx_stress_summary.png": sha256_file(stress),
+        },
+    }
+    (run_dir / "development_stage.json").write_text(
+        json.dumps(stage), encoding="utf-8"
+    )
+
+    state, loaded = read_elasticity_report(run_dir)
+
+    assert state is ElasticityRunState.TRAINED
+    assert loaded == report
+
+
+def test_directional_run_rejects_schema_5_provenance_downgrade(tmp_path) -> None:
+    spec = json.loads(
+        (ROOT / "examples/elasticity_2d_cantilever/smoke.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    run_dir = _write_request_identity(tmp_path, spec)
+    diagnostics = run_dir / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
+    displacement = diagnostics / "displacement_comparison.png"
+    stress = diagnostics / "fenicsx_stress_summary.png"
+    displacement.write_bytes(b"displacement")
+    stress.write_bytes(b"stress")
+    report = {
+        "schema_version": 5,
+        "status": "development_complete",
+        "deeponet_metrics": {},
+        "pod_rbf_metrics": {},
+        "training": {},
+        "timing": {},
+    }
+    report_path = run_dir / "development_evaluation.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    stage = {
+        "schema_version": 5,
+        "status": "complete",
+        "result_sha256": sha256_file(report_path),
+        "diagnostic_sha256": {
+            "diagnostics/displacement_comparison.png": sha256_file(displacement),
+            "diagnostics/fenicsx_stress_summary.png": sha256_file(stress),
+        },
+    }
+    stage_path = run_dir / "development_stage.json"
+    stage_path.write_text(json.dumps(stage), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="版本|降级|身份"):
+        read_elasticity_report(run_dir)
+    assert pipeline_module._stage_hash_matches(stage_path, report_path) is False
+
+
+def test_coordinated_request_and_report_downgrade_is_rejected(tmp_path) -> None:
+    current_spec = json.loads(
+        (ROOT / "examples/elasticity_2d_cantilever/smoke.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    run_dir = _write_request_identity(tmp_path, current_spec)
+    diagnostics = run_dir / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
+    displacement = diagnostics / "displacement_comparison.png"
+    stress = diagnostics / "fenicsx_stress_summary.png"
+    displacement.write_bytes(b"displacement")
+    stress.write_bytes(b"stress")
+
+    legacy_spec = json.loads(json.dumps(current_spec))
+    legacy_spec["model"].pop("architecture")
+    _overwrite_request_identity(run_dir, legacy_spec)
+    report = {
+        "schema_version": 5,
+        "status": "development_complete",
+        "deeponet_metrics": {},
+        "pod_rbf_metrics": {},
+        "training": {},
+        "timing": {},
+    }
+    report_path = run_dir / "development_evaluation.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    stage = {
+        "schema_version": 5,
+        "status": "complete",
+        "result_sha256": sha256_file(report_path),
+        "diagnostic_sha256": {
+            "diagnostics/displacement_comparison.png": sha256_file(displacement),
+            "diagnostics/fenicsx_stress_summary.png": sha256_file(stress),
+        },
+    }
+    stage_path = run_dir / "development_stage.json"
+    stage_path.write_text(json.dumps(stage), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="目录|身份"):
+        read_elasticity_report(run_dir)
+    assert pipeline_module._stage_hash_matches(stage_path, report_path) is False
+
+
+def test_pipeline_rejects_runs_directory_nested_inside_reuse_source(tmp_path) -> None:
+    source = tmp_path / "source"
+    manifest = source / "solver_output" / "datasets" / "dataset_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="重叠"):
+        pipeline_module.run_elasticity_pipeline(
+            ROOT / "examples/elasticity_2d_cantilever/smoke.json",
+            source,
+            "overlap must fail before target creation",
+            reuse_data_from=source,
+        )
+
+    assert not list(source.glob("elasticity-smoke-*"))
+
+
+def test_reused_run_identity_binds_source_request_hash(tmp_path) -> None:
+    spec = load_elasticity_spec(
+        ROOT / "examples/elasticity_2d_cantilever/smoke.json"
+    )
+    source_identity = {"request": "source", "spec": spec.model_dump(mode="json")}
+    canonical = json.dumps(
+        source_identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    source_digest = hashlib.sha256(canonical).hexdigest()
+    source = tmp_path / f"elasticity-smoke-{source_digest[:12]}"
+    manifest = source / "solver_output" / "datasets" / "dataset_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+    (source / "request.json").write_text(
+        json.dumps({**source_identity, "identity_sha256": source_digest}),
+        encoding="utf-8",
+    )
+
+    run_dir = pipeline_module._resolve_run_directory(
+        tmp_path / "runs", spec, "bind source request", source
+    )
+    request = json.loads((run_dir / "request.json").read_text(encoding="utf-8"))
+
+    assert request["reuse_source_request_sha256"] == sha256_file(
+        source / "request.json"
+    )
+
+
+def _write_request_identity(parent: Path, spec: dict[str, object]) -> Path:
+    identity, digest = _request_identity(spec)
+    run_dir = parent / f"elasticity-smoke-{digest[:12]}"
+    run_dir.mkdir()
+    _write_request_payload(run_dir, identity, digest)
+    return run_dir
+
+
+def _overwrite_request_identity(run_dir: Path, spec: dict[str, object]) -> None:
+    identity, digest = _request_identity(spec)
+    _write_request_payload(run_dir, identity, digest)
+
+
+def _request_identity(spec: dict[str, object]) -> tuple[dict[str, object], str]:
+    identity = {"request": "schema compatibility test", "spec": spec}
+    canonical = json.dumps(
+        identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return identity, hashlib.sha256(canonical).hexdigest()
+
+
+def _write_request_payload(
+    run_dir: Path, identity: dict[str, object], digest: str
+) -> None:
+    payload = {**identity, "identity_sha256": digest}
+    (run_dir / "request.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _freeze_inputs(tmp_path: Path) -> dict[str, object]:
@@ -342,7 +576,7 @@ def _freeze_inputs(tmp_path: Path) -> dict[str, object]:
         sealed_test_sha256=sha256_file(sealed_path),
     )
     normalization = FieldNormalization.fit(
-        elasticity_features(parameters[train]), coordinates, fields[train]
+        elasticity_basis_features(parameters[train]), coordinates, fields[train]
     )
     baseline = PodRbfBaseline(
         energy_threshold=spec.pod.energy_threshold,

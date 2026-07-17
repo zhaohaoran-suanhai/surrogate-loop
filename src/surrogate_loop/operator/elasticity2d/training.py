@@ -14,7 +14,7 @@ from surrogate_loop.operator.elasticity2d.deeponet import (
     apply_elasticity_constraints,
     build_elasticity_deeponet,
 )
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.field_data import FieldDataset, FieldNormalization
 from surrogate_loop.operator.runtime import seed_everything
 from surrogate_loop.operator.vector_deeponet import VectorDeepONet
@@ -297,7 +297,7 @@ def _prepare_dataset(
     physical_parameters = dataset.parameters.astype(np.float32)
     physical_coordinates = dataset.coordinates.astype(np.float32)
     features = normalization.normalize_features(
-        elasticity_features(dataset.parameters)
+        elasticity_basis_features(dataset.parameters)
     ).astype(np.float32)
     coordinates = normalization.normalize_coordinates(dataset.coordinates).astype(
         np.float32
@@ -352,7 +352,7 @@ def _validate_training_contract(
     if not np.array_equal(partitions.train.coordinates, partitions.validation.coordinates):
         raise ValueError("训练集和验证集必须共享观察坐标")
     if (
-        normalization.feature_mean.shape != (5,)
+        normalization.feature_mean.shape != (3,)
         or normalization.coordinate_mean.shape != (2,)
         or normalization.target_rms.shape != (2,)
     ):

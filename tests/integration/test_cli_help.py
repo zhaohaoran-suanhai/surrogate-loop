@@ -34,3 +34,10 @@ def test_module_entrypoint_displays_elasticity_help() -> None:
 
     assert result.returncode == 0
     assert "二维线弹性神经算子闭环" in result.stdout
+
+
+def test_elasticity_run_help_exposes_audited_data_reuse() -> None:
+    result = run_cli("elasticity2d", "run", "--help")
+
+    assert result.returncode == 0
+    assert "--reuse-data-from" in result.stdout

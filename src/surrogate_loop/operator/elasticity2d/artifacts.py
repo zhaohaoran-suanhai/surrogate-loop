@@ -165,9 +165,10 @@ def freeze_run(
         _write_json_atomic(
             directory / "network.json",
             {
-                "branch_input_dim": 5,
+                "architecture": spec.model.architecture,
+                "branch_input_dim": 3,
                 "trunk_input_dim": 2,
-                "output_dim": 2,
+                "output_dim": 4,
                 "hidden_width": spec.model.hidden_width,
                 "hidden_layers": spec.model.hidden_layers,
                 "latent_dim": spec.model.latent_dim,

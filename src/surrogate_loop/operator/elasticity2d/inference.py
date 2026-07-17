@@ -19,7 +19,10 @@ from surrogate_loop.operator.elasticity2d.deeponet import (
     apply_elasticity_constraints,
     build_elasticity_deeponet,
 )
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.development_report import (
+    read_verified_development_report,
+)
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.field_data import FieldNormalization, sha256_file
 from surrogate_loop.operator.runtime import resolve_device
 from surrogate_loop.operator.vector_deeponet import VectorDeepONet
@@ -101,9 +104,10 @@ def load_elasticity_bundle(
     )
     normalization = _load_normalization(directory / "normalization.json")
     expected_network = {
-        "branch_input_dim": 5,
+        "architecture": spec.model.architecture,
+        "branch_input_dim": 3,
         "trunk_input_dim": 2,
-        "output_dim": 2,
+        "output_dim": 4,
         "hidden_width": spec.model.hidden_width,
         "hidden_layers": spec.model.hidden_layers,
         "latent_dim": spec.model.latent_dim,
@@ -145,33 +149,7 @@ def read_elasticity_report(
         return verified_state, payload
     if state is not ElasticityRunState.TRAINED:
         raise RuntimeError("二维弹性运行尚无可读报告")
-    stage = _read_json(directory / "development_stage.json")
-    if set(stage) != {
-        "schema_version",
-        "status",
-        "result_sha256",
-        "diagnostic_sha256",
-    } or stage.get("schema_version") != 5:
-        raise RuntimeError("二维弹性 Smoke 阶段字段无效")
-    result_path = directory / "development_evaluation.json"
-    diagnostics = stage.get("diagnostic_sha256")
-    if (
-        stage.get("status") != "complete"
-        or stage.get("result_sha256") != sha256_file(result_path)
-        or not _verify_development_diagnostics(directory, diagnostics)
-    ):
-        raise RuntimeError("二维弹性 Smoke 报告完整性校验失败")
-    payload = _read_json(result_path)
-    if set(payload) != {
-        "schema_version",
-        "status",
-        "deeponet_metrics",
-        "pod_rbf_metrics",
-        "training",
-        "timing",
-    } or payload.get("schema_version") != 5 or payload.get("status") != "development_complete":
-        raise RuntimeError("二维弹性 Smoke 报告字段无效")
-    return state, payload
+    return state, read_verified_development_report(directory)
 
 
 def predict_elasticity_points(
@@ -182,9 +160,9 @@ def predict_elasticity_points(
     values = np.asarray(parameters, dtype=np.float64)
     points = _validate_coordinates(coordinates)
     validate_elasticity_request(bundle.spec, values, points)
-    features = bundle.normalization.normalize_features(elasticity_features(values)).astype(
-        np.float32
-    )
+    features = bundle.normalization.normalize_features(
+        elasticity_basis_features(values)
+    ).astype(np.float32)
     normalized_points = bundle.normalization.normalize_coordinates(points).astype(
         np.float32
     )
@@ -243,23 +221,6 @@ def _verify_acceptance_stage(run_dir: Path) -> None:
         raise RuntimeError("FEniCSx 基准证据未进入验收摘要")
     if benchmark is not None and benchmark != sha256_file(benchmark_path):
         raise RuntimeError("FEniCSx 基准证据完整性校验失败")
-
-
-def _verify_development_diagnostics(run_dir: Path, payload: object) -> bool:
-    expected = {
-        "diagnostics/displacement_comparison.png",
-        "diagnostics/fenicsx_stress_summary.png",
-    }
-    return bool(
-        isinstance(payload, dict)
-        and set(payload) == expected
-        and all(
-            isinstance(digest, str)
-            and len(digest) == 64
-            and sha256_file(run_dir / relative) == digest
-            for relative, digest in payload.items()
-        )
-    )
 
 
 def _load_normalization(path: Path) -> FieldNormalization:
