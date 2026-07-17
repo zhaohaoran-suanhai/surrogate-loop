@@ -19,7 +19,7 @@ from surrogate_loop.operator.elasticity2d.deeponet import (
     apply_elasticity_constraints,
     build_elasticity_deeponet,
 )
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.field_data import FieldNormalization, sha256_file
 from surrogate_loop.operator.runtime import resolve_device
 from surrogate_loop.operator.vector_deeponet import VectorDeepONet
@@ -101,9 +101,10 @@ def load_elasticity_bundle(
     )
     normalization = _load_normalization(directory / "normalization.json")
     expected_network = {
-        "branch_input_dim": 5,
+        "architecture": spec.model.architecture,
+        "branch_input_dim": 3,
         "trunk_input_dim": 2,
-        "output_dim": 2,
+        "output_dim": 4,
         "hidden_width": spec.model.hidden_width,
         "hidden_layers": spec.model.hidden_layers,
         "latent_dim": spec.model.latent_dim,
@@ -182,9 +183,9 @@ def predict_elasticity_points(
     values = np.asarray(parameters, dtype=np.float64)
     points = _validate_coordinates(coordinates)
     validate_elasticity_request(bundle.spec, values, points)
-    features = bundle.normalization.normalize_features(elasticity_features(values)).astype(
-        np.float32
-    )
+    features = bundle.normalization.normalize_features(
+        elasticity_basis_features(values)
+    ).astype(np.float32)
     normalized_points = bundle.normalization.normalize_coordinates(points).astype(
         np.float32
     )

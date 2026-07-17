@@ -22,7 +22,7 @@ from surrogate_loop.operator.elasticity2d.dataset import DatasetFiles
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
 from surrogate_loop.operator.elasticity2d.inference import read_elasticity_report
 from surrogate_loop.operator.elasticity2d.pod_rbf import PodRbfBaseline
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 from surrogate_loop.operator.elasticity2d.training import (
     SelectedTraining,
@@ -44,8 +44,8 @@ def test_neural_speed_benchmark_measures_one_sample(monkeypatch) -> None:
         diagnostics={},
     )
     normalization = FieldNormalization(
-        feature_mean=np.zeros(5),
-        feature_std=np.ones(5),
+        feature_mean=np.zeros(3),
+        feature_std=np.ones(3),
         coordinate_mean=np.zeros(2),
         coordinate_std=np.ones(2),
         target_rms=np.ones(2),
@@ -182,6 +182,15 @@ def test_freeze_run_hashes_scientific_identity_and_selected_checkpoint(tmp_path)
     verified = verify_freeze_manifest(run_dir)
     assert verified == manifest
     assert all(sha256_file(run_dir / name) == digest for name, digest in manifest.files.items())
+    assert json.loads((run_dir / "network.json").read_text(encoding="utf-8")) == {
+        "architecture": "directional_linear_v2",
+        "branch_input_dim": 3,
+        "trunk_input_dim": 2,
+        "output_dim": 4,
+        "hidden_width": inputs["spec"].model.hidden_width,
+        "hidden_layers": inputs["spec"].model.hidden_layers,
+        "latent_dim": inputs["spec"].model.latent_dim,
+    }
 
 
 def test_freeze_manifest_rejects_tampered_hashed_artifact(tmp_path) -> None:
@@ -342,7 +351,7 @@ def _freeze_inputs(tmp_path: Path) -> dict[str, object]:
         sealed_test_sha256=sha256_file(sealed_path),
     )
     normalization = FieldNormalization.fit(
-        elasticity_features(parameters[train]), coordinates, fields[train]
+        elasticity_basis_features(parameters[train]), coordinates, fields[train]
     )
     baseline = PodRbfBaseline(
         energy_threshold=spec.pod.energy_threshold,

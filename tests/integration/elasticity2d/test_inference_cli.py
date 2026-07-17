@@ -8,15 +8,18 @@ import numpy as np
 import pytest
 import torch
 
+import surrogate_loop.operator.elasticity2d.inference as inference_module
 from surrogate_loop.cli import main
+from surrogate_loop.operator.elasticity2d.artifacts import ElasticityRunState
 from surrogate_loop.operator.elasticity2d.config import load_elasticity_spec
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
 from surrogate_loop.operator.elasticity2d.inference import (
     ElasticityBundle,
+    load_elasticity_bundle,
     predict_elasticity_points,
     validate_elasticity_request,
 )
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.field_data import FieldNormalization
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -72,7 +75,7 @@ def test_point_inference_enforces_domain_and_vector_shape() -> None:
     spec = load_elasticity_spec(ROOT / "examples/elasticity_2d_cantilever/full.json")
     parameters = np.array([[2.0, 0.3, 0.004, 0.0, 0.5, 0.1]])
     coordinates = np.array([[0.0, 0.5], [4.0, 0.5]])
-    features = elasticity_features(
+    features = elasticity_basis_features(
         np.array(
             [
                 [2.0, 0.25, 0.003, -0.2, 0.4, 0.09],
@@ -100,6 +103,48 @@ def test_point_inference_enforces_domain_and_vector_shape() -> None:
         validate_elasticity_request(spec, parameters, np.array([[4.01, 0.5]]))
     with pytest.raises(ValueError, match="1000000"):
         validate_elasticity_request(spec, parameters, nx=1001, ny=1000)
+
+
+def test_bundle_rejects_legacy_network_contract(tmp_path, monkeypatch) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    spec_path = ROOT / "examples/elasticity_2d_cantilever/full.json"
+    (run_dir / "spec.json").write_bytes(spec_path.read_bytes())
+    (run_dir / "normalization.json").write_text(
+        json.dumps(
+            {
+                "feature_mean": [0.3, 0.5, 0.1],
+                "feature_std": [0.05, 0.1, 0.02],
+                "coordinate_mean": [2.0, 0.5],
+                "coordinate_std": [1.0, 0.25],
+                "target_rms": [1.0, 1.0],
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec = load_elasticity_spec(spec_path)
+    (run_dir / "network.json").write_text(
+        json.dumps(
+            {
+                "architecture": "directional_linear_v2",
+                "branch_input_dim": 3,
+                "trunk_input_dim": 2,
+                "output_dim": 2,
+                "hidden_width": spec.model.hidden_width,
+                "hidden_layers": spec.model.hidden_layers,
+                "latent_dim": spec.model.latent_dim,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        inference_module,
+        "verify_elasticity_acceptance",
+        lambda _: (object(), ElasticityRunState.ACCEPTED, {}),
+    )
+
+    with pytest.raises(RuntimeError, match="网络结构"):
+        load_elasticity_bundle(run_dir, "cpu")
 
 
 def _minimal_frozen_metadata(tmp_path: Path) -> Path:

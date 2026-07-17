@@ -30,7 +30,7 @@ from surrogate_loop.operator.elasticity2d.dataset import (
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
 from surrogate_loop.operator.elasticity2d.evaluation import compute_elasticity_metrics
 from surrogate_loop.operator.elasticity2d.pod_rbf import PodRbfBaseline
-from surrogate_loop.operator.elasticity2d.problem import elasticity_features
+from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.elasticity2d.reporting import write_smoke_diagnostics
 from surrogate_loop.operator.elasticity2d.sampling import build_sample_plan
 from surrogate_loop.operator.elasticity2d.training import (
@@ -85,7 +85,7 @@ def run_elasticity_pipeline(
         if state in {ElasticityRunState.SOLVER_ACCEPTED, ElasticityRunState.TRAINED}:
             partitions = load_development_partitions(dataset_files, sample_plan)
             normalization = FieldNormalization.fit(
-                elasticity_features(partitions.train.parameters),
+                elasticity_basis_features(partitions.train.parameters),
                 partitions.train.coordinates,
                 partitions.train.fields,
             )
