@@ -28,7 +28,7 @@
     "max_mesh_convergence_error": 0.01
   },
   "pod": {"energy_threshold": 0.999, "max_components": 64},
-  "model": {"hidden_width": 128, "hidden_layers": 3, "latent_dim": 128},
+  "model": {"architecture": "directional_linear_v2", "hidden_width": 128, "hidden_layers": 3, "latent_dim": 128},
   "training": {
     "max_epochs": 1000,
     "patience": 80,

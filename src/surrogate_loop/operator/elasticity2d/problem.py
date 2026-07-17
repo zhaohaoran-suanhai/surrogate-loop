@@ -10,6 +10,13 @@ HEIGHT = 1.0
 PARAMETER_DIM = 6
 
 
+def elasticity_basis_features(
+    parameters: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    values = validate_parameter_array(parameters)
+    return values[:, [1, 4, 5]].copy()
+
+
 def elasticity_features(
     parameters: NDArray[np.float64],
 ) -> NDArray[np.float64]:

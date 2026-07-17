@@ -71,6 +71,7 @@ class PodRbfSpec(StrictModel):
 
 
 class VectorDeepONetSpec(StrictModel):
+    architecture: Literal["directional_linear_v2"]
     hidden_width: int = Field(gt=0)
     hidden_layers: int = Field(gt=0)
     latent_dim: int = Field(gt=0)
@@ -187,21 +188,21 @@ class ElasticityRunSpec(StrictModel):
                 (256, 64, 2, 2),
                 (129, 33),
                 (16, 0, 0),
-                (16, 2, 8),
+                ("directional_linear_v2", 16, 2, 8),
                 (1, 1, 1, 1, 1e-3, 0.5, 1e-6, 0.0, 1.0, (20260716,)),
             ),
             "smoke": (
                 (128, 32, 2, 2),
                 (65, 17),
                 (96, 24, 24),
-                (128, 3, 128),
+                ("directional_linear_v2", 128, 3, 128),
                 (1000, 80, 16, 256, 1e-3, 0.5, 1e-6, 1e-6, 30.0, (20260716,)),
             ),
             "full": (
                 (256, 64, 2, 2),
                 (129, 33),
                 (512, 96, 128),
-                (128, 3, 128),
+                ("directional_linear_v2", 128, 3, 128),
                 (
                     600,
                     60,
@@ -224,7 +225,12 @@ class ElasticityRunSpec(StrictModel):
                 self.sampling.validation_cases,
                 self.sampling.test_cases,
             ),
-            (self.model.hidden_width, self.model.hidden_layers, self.model.latent_dim),
+            (
+                self.model.architecture,
+                self.model.hidden_width,
+                self.model.hidden_layers,
+                self.model.latent_dim,
+            ),
             (
                 self.training.max_epochs,
                 self.training.patience,

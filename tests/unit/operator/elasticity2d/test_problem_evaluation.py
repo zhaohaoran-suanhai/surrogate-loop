@@ -10,6 +10,7 @@ from surrogate_loop.operator.elasticity2d.evaluation import (
     elasticity_is_acceptable,
 )
 from surrogate_loop.operator.elasticity2d.problem import (
+    elasticity_basis_features,
     elasticity_features,
     traction_density,
 )
@@ -48,6 +49,22 @@ def test_angle_features_are_periodic() -> None:
         elasticity_features(left), elasticity_features(right), atol=1e-15
     )
     assert elasticity_features(left).shape == (1, 5)
+
+
+def test_elasticity_basis_features_exclude_load_direction_and_scale() -> None:
+    first = np.array([[2.0, 0.31, 0.004, 0.2, 0.45, 0.11]])
+    second = np.array([[5.0, 0.31, 0.009, -2.4, 0.45, 0.11]])
+
+    np.testing.assert_allclose(
+        elasticity_basis_features(first),
+        elasticity_basis_features(second),
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        elasticity_basis_features(first),
+        np.array([[0.31, 0.45, 0.11]]),
+    )
 
 
 @pytest.mark.parametrize(("center", "width"), [(0.2, 0.08), (0.5, 0.12), (0.8, 0.2)])

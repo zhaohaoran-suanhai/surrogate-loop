@@ -34,6 +34,20 @@ def test_canonical_elasticity_specs_load() -> None:
     assert full.acceptance.max_p95_relative_l2 == 0.08
 
 
+def test_canonical_specs_lock_directional_linear_v2() -> None:
+    for name in ("calibration.json", "smoke.json", "full.json"):
+        spec = load_elasticity_spec(EXAMPLES / name)
+        assert spec.model.architecture == "directional_linear_v2"
+
+
+def test_full_contract_rejects_legacy_vector_architecture() -> None:
+    payload = json.loads((EXAMPLES / "full.json").read_text(encoding="utf-8"))
+    payload["model"]["architecture"] = "legacy_vector_v1"
+
+    with pytest.raises(ValidationError, match="architecture"):
+        ElasticityRunSpec.model_validate(payload)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
