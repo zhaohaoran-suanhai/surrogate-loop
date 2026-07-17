@@ -187,6 +187,8 @@ def test_future_skill_draft_is_content_only_and_reads_dynamic_facts() -> None:
         assert required in content
     assert "本文件不是可安装 Skill" in content
     assert "固定实测数值" in content
+    assert "accepted Full" in content
+    assert "二维线弹性当前未完成 Full" not in content
 
 
 def test_agent_rehearsal_covers_demo_run_and_new_pde() -> None:
