@@ -92,7 +92,7 @@ function Invoke-FixedCommand {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$FilePath,
-        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][AllowEmptyString()][AllowEmptyCollection()][string[]]$Arguments,
         [Parameter(Mandatory)][string]$WorkingDirectory
     )
 
@@ -151,17 +151,24 @@ function Get-FileManifest {
         }
     }
 
-    $items = foreach ($file in $children | Where-Object { -not $_.PSIsContainer }) {
+    $items = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($file in $children | Where-Object { -not $_.PSIsContainer }) {
         if (-not $file.FullName.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
             throw "文件离开运行目录：$($file.FullName)"
         }
-        [pscustomobject][ordered]@{
+        [void]$items.Add([pscustomobject][ordered]@{
             path = $file.FullName.Substring($prefix.Length).Replace('\', '/')
             bytes = [int64]$file.Length
             sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
+        })
     }
-    @($items | Sort-Object -Property path)
+    $items.Sort([Comparison[object]]{
+        param($left, $right)
+        [StringComparer]::Ordinal.Compare([string]$left.path, [string]$right.path)
+    })
+    foreach ($item in $items) {
+        Write-Output $item
+    }
 }
 
 function Test-FileManifest {
@@ -228,9 +235,15 @@ function Test-SafeZipEntries {
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $destination = [IO.Path]::GetFullPath($DestinationRoot)
+    if (Test-Path -LiteralPath $destination) {
+        $destinationItem = Get-Item -LiteralPath $destination
+        if (($destinationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "ZIP destination root cannot be a reparse point: $destination"
+        }
+    }
     $trimCharacters = [char[]]@([char]92, [char]47)
     $destinationPrefix = $destination.TrimEnd($trimCharacters) + [IO.Path]::DirectorySeparatorChar
-    $entryNames = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $destinationPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $archive = [IO.Compression.ZipFile]::OpenRead($ArchivePath)
     try {
         foreach ($entry in $archive.Entries) {
@@ -247,12 +260,12 @@ function Test-SafeZipEntries {
             if (($name -split '[\\/]') -contains '..') {
                 throw "ZIP entry leaves the destination root: $name"
             }
-            if (-not $entryNames.Add($name)) {
-                throw "ZIP contains a duplicate entry: $name"
-            }
             $candidate = [IO.Path]::GetFullPath((Join-Path $destination $name.Replace('/', '\')))
             if (-not $candidate.StartsWith($destinationPrefix, [StringComparison]::OrdinalIgnoreCase)) {
                 throw "ZIP entry leaves the destination root: $name"
+            }
+            if (-not $destinationPaths.Add($candidate)) {
+                throw "ZIP contains a duplicate destination path: $name"
             }
         }
     }
