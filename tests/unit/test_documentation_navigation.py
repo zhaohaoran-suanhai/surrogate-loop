@@ -18,6 +18,8 @@ def test_agent_documentation_entrypoints_exist() -> None:
         "docs/demos/二维线弹性演示手册.md",
         "docs/demos/演示Skill内容草案.md",
         "docs/demos/Agent接管验收清单.md",
+        "docs/周报/README.md",
+        "docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md",
     )
     assert [path for path in expected if not (ROOT / path).is_file()] == []
 
@@ -26,7 +28,31 @@ def test_document_map_routes_four_agent_tasks() -> None:
     content = _read("docs/README.md")
     for required in ("演示", "运行已有闭环", "诊断", "开发新 PDE"):
         assert required in content
+    assert "周报" in content
     assert "不要默认全文读取所有实施计划" in content
+
+
+def test_first_weekly_report_covers_management_story_and_evidence_chain() -> None:
+    index = _read("docs/周报/README.md")
+    report = _read("docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md")
+    assert "第 01 期" in index
+    for required in (
+        "Executive Summary",
+        "基本架构",
+        "三个代理模型闭环",
+        "核心算法",
+        "二维线弹性",
+        "Full",
+        "能力边界",
+        "20 分钟演示",
+        "证据链",
+        "acceptance_stage.json",
+        "acceptance.json",
+        "elasticity-full-ba8ff8e584d9",
+    ):
+        assert required in report
+    assert "0.2519%" in report
+    assert "931.18" in report
 
 
 def test_capability_status_distinguishes_evidence_levels() -> None:
