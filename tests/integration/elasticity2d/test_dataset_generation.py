@@ -163,6 +163,7 @@ def test_smoke_dataset_can_be_copied_from_verified_source_without_solver(
     evidence = json.loads((target / "dataset_reuse.json").read_text(encoding="utf-8"))
     assert evidence["schema_version"] == 1
     assert evidence["source_run_dir"] == str(source.resolve())
+    assert evidence["source_request_sha256"] == sha256_file(source / "request.json")
     assert evidence["source_manifest_sha256"] == sha256_file(manifest)
     assert evidence["target_job_sha256"] == sha256_file(target / "solver_job.json")
 
@@ -258,9 +259,6 @@ def _tree_hashes(root: Path) -> dict[str, str]:
 
 
 def _write_source_run(tmp_path: Path, spec, plan) -> tuple[Path, Path]:
-    source = tmp_path / "source"
-    source.mkdir()
-    manifest = _write_fake_solver_output(source / "solver_output", spec, plan)
     identity = {"request": "old smoke", "spec": spec.model_dump(mode="json")}
     canonical = json.dumps(
         identity,
@@ -268,7 +266,11 @@ def _write_source_run(tmp_path: Path, spec, plan) -> tuple[Path, Path]:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    identity["identity_sha256"] = hashlib.sha256(canonical).hexdigest()
+    digest = hashlib.sha256(canonical).hexdigest()
+    source = tmp_path / f"elasticity-smoke-{digest[:12]}"
+    source.mkdir()
+    manifest = _write_fake_solver_output(source / "solver_output", spec, plan)
+    identity["identity_sha256"] = digest
     (source / "request.json").write_text(
         json.dumps(identity, ensure_ascii=False), encoding="utf-8"
     )

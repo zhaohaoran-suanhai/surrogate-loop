@@ -206,6 +206,13 @@ def _verify_source_request(source_run_dir: Path) -> str:
     allowed = (
         {"request", "spec"},
         {"request", "spec", "reuse_data_from", "reuse_manifest_sha256"},
+        {
+            "request",
+            "spec",
+            "reuse_data_from",
+            "reuse_manifest_sha256",
+            "reuse_source_request_sha256",
+        },
     )
     if set(identity) not in allowed:
         raise RuntimeError("复用源请求身份字段无效")
@@ -221,6 +228,7 @@ def _verify_source_request(source_run_dir: Path) -> str:
         payload["identity_sha256"] != digest
         or not isinstance(source_spec, dict)
         or source_spec.get("mode") != "smoke"
+        or source_run_dir.name != f"elasticity-smoke-{digest[:12]}"
     ):
         raise RuntimeError("复用源请求身份无效或不是 Smoke")
     return sha256_file(path)

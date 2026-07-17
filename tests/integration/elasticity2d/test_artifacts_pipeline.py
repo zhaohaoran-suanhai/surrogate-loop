@@ -324,17 +324,16 @@ def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypa
 
 
 def test_legacy_schema_5_smoke_report_remains_readable(tmp_path) -> None:
-    run_dir = tmp_path / "legacy"
-    diagnostics = run_dir / "diagnostics"
-    diagnostics.mkdir(parents=True)
-    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
     legacy_spec = json.loads(
         (ROOT / "examples/elasticity_2d_cantilever/smoke.json").read_text(
             encoding="utf-8"
         )
     )
     legacy_spec["model"].pop("architecture")
-    _write_request_identity(run_dir, legacy_spec)
+    run_dir = _write_request_identity(tmp_path, legacy_spec)
+    diagnostics = run_dir / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
     displacement = diagnostics / "displacement_comparison.png"
     stress = diagnostics / "fenicsx_stress_summary.png"
     displacement.write_bytes(b"displacement")
@@ -369,16 +368,15 @@ def test_legacy_schema_5_smoke_report_remains_readable(tmp_path) -> None:
 
 
 def test_directional_run_rejects_schema_5_provenance_downgrade(tmp_path) -> None:
-    run_dir = tmp_path / "directional"
-    diagnostics = run_dir / "diagnostics"
-    diagnostics.mkdir(parents=True)
-    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
     spec = json.loads(
         (ROOT / "examples/elasticity_2d_cantilever/smoke.json").read_text(
             encoding="utf-8"
         )
     )
-    _write_request_identity(run_dir, spec)
+    run_dir = _write_request_identity(tmp_path, spec)
+    diagnostics = run_dir / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
     displacement = diagnostics / "displacement_comparison.png"
     stress = diagnostics / "fenicsx_stress_summary.png"
     displacement.write_bytes(b"displacement")
@@ -410,6 +408,51 @@ def test_directional_run_rejects_schema_5_provenance_downgrade(tmp_path) -> None
     assert pipeline_module._stage_hash_matches(stage_path, report_path) is False
 
 
+def test_coordinated_request_and_report_downgrade_is_rejected(tmp_path) -> None:
+    current_spec = json.loads(
+        (ROOT / "examples/elasticity_2d_cantilever/smoke.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    run_dir = _write_request_identity(tmp_path, current_spec)
+    diagnostics = run_dir / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
+    displacement = diagnostics / "displacement_comparison.png"
+    stress = diagnostics / "fenicsx_stress_summary.png"
+    displacement.write_bytes(b"displacement")
+    stress.write_bytes(b"stress")
+
+    legacy_spec = json.loads(json.dumps(current_spec))
+    legacy_spec["model"].pop("architecture")
+    _overwrite_request_identity(run_dir, legacy_spec)
+    report = {
+        "schema_version": 5,
+        "status": "development_complete",
+        "deeponet_metrics": {},
+        "pod_rbf_metrics": {},
+        "training": {},
+        "timing": {},
+    }
+    report_path = run_dir / "development_evaluation.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    stage = {
+        "schema_version": 5,
+        "status": "complete",
+        "result_sha256": sha256_file(report_path),
+        "diagnostic_sha256": {
+            "diagnostics/displacement_comparison.png": sha256_file(displacement),
+            "diagnostics/fenicsx_stress_summary.png": sha256_file(stress),
+        },
+    }
+    stage_path = run_dir / "development_stage.json"
+    stage_path.write_text(json.dumps(stage), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="目录|身份"):
+        read_elasticity_report(run_dir)
+    assert pipeline_module._stage_hash_matches(stage_path, report_path) is False
+
+
 def test_pipeline_rejects_runs_directory_nested_inside_reuse_source(tmp_path) -> None:
     source = tmp_path / "source"
     manifest = source / "solver_output" / "datasets" / "dataset_manifest.json"
@@ -427,7 +470,51 @@ def test_pipeline_rejects_runs_directory_nested_inside_reuse_source(tmp_path) ->
     assert not list(source.glob("elasticity-smoke-*"))
 
 
-def _write_request_identity(run_dir: Path, spec: dict[str, object]) -> None:
+def test_reused_run_identity_binds_source_request_hash(tmp_path) -> None:
+    spec = load_elasticity_spec(
+        ROOT / "examples/elasticity_2d_cantilever/smoke.json"
+    )
+    source_identity = {"request": "source", "spec": spec.model_dump(mode="json")}
+    canonical = json.dumps(
+        source_identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    source_digest = hashlib.sha256(canonical).hexdigest()
+    source = tmp_path / f"elasticity-smoke-{source_digest[:12]}"
+    manifest = source / "solver_output" / "datasets" / "dataset_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+    (source / "request.json").write_text(
+        json.dumps({**source_identity, "identity_sha256": source_digest}),
+        encoding="utf-8",
+    )
+
+    run_dir = pipeline_module._resolve_run_directory(
+        tmp_path / "runs", spec, "bind source request", source
+    )
+    request = json.loads((run_dir / "request.json").read_text(encoding="utf-8"))
+
+    assert request["reuse_source_request_sha256"] == sha256_file(
+        source / "request.json"
+    )
+
+
+def _write_request_identity(parent: Path, spec: dict[str, object]) -> Path:
+    identity, digest = _request_identity(spec)
+    run_dir = parent / f"elasticity-smoke-{digest[:12]}"
+    run_dir.mkdir()
+    _write_request_payload(run_dir, identity, digest)
+    return run_dir
+
+
+def _overwrite_request_identity(run_dir: Path, spec: dict[str, object]) -> None:
+    identity, digest = _request_identity(spec)
+    _write_request_payload(run_dir, identity, digest)
+
+
+def _request_identity(spec: dict[str, object]) -> tuple[dict[str, object], str]:
     identity = {"request": "schema compatibility test", "spec": spec}
     canonical = json.dumps(
         identity,
@@ -435,10 +522,13 @@ def _write_request_identity(run_dir: Path, spec: dict[str, object]) -> None:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    payload = {
-        **identity,
-        "identity_sha256": hashlib.sha256(canonical).hexdigest(),
-    }
+    return identity, hashlib.sha256(canonical).hexdigest()
+
+
+def _write_request_payload(
+    run_dir: Path, identity: dict[str, object], digest: str
+) -> None:
+    payload = {**identity, "identity_sha256": digest}
     (run_dir / "request.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )

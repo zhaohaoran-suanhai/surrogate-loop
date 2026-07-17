@@ -171,12 +171,16 @@ def _resolve_run_directory(
     }
     if reuse_data_from is not None:
         source = reuse_data_from.resolve()
+        destination_root = runs_dir.resolve()
+        if destination_root == source or destination_root.is_relative_to(source):
+            raise ValueError("复用目标目录不得与源运行目录重叠")
         identity.update(
             {
                 "reuse_data_from": str(source),
                 "reuse_manifest_sha256": sha256_file(
                     source / "solver_output" / "datasets" / "dataset_manifest.json"
                 ),
+                "reuse_source_request_sha256": sha256_file(source / "request.json"),
             }
         )
     canonical = json.dumps(

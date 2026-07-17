@@ -85,7 +85,11 @@ def _verified_request_identity(run_dir: Path) -> tuple[int, dict[str, object]]:
     payload = _read_json(run_dir / "request.json")
     identity = {name: value for name, value in payload.items() if name != "identity_sha256"}
     base_fields = {"request", "spec"}
-    reused_fields = base_fields | {"reuse_data_from", "reuse_manifest_sha256"}
+    reused_fields = base_fields | {
+        "reuse_data_from",
+        "reuse_manifest_sha256",
+        "reuse_source_request_sha256",
+    }
     if set(identity) not in (base_fields, reused_fields):
         raise RuntimeError("二维弹性 Smoke 请求身份字段无效")
     canonical = json.dumps(
@@ -94,11 +98,14 @@ def _verified_request_identity(run_dir: Path) -> tuple[int, dict[str, object]]:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    if payload.get("identity_sha256") != hashlib.sha256(canonical).hexdigest():
+    digest = hashlib.sha256(canonical).hexdigest()
+    if payload.get("identity_sha256") != digest:
         raise RuntimeError("二维弹性 Smoke 请求身份摘要无效")
     spec = identity.get("spec")
     if not isinstance(spec, dict) or spec.get("mode") != "smoke":
         raise RuntimeError("二维弹性开发报告请求必须为 Smoke")
+    if run_dir.name != f"elasticity-smoke-{digest[:12]}":
+        raise RuntimeError("二维弹性 Smoke 运行目录与请求身份不一致")
     model = spec.get("model")
     if not isinstance(model, dict):
         raise RuntimeError("二维弹性 Smoke 请求模型身份无效")
@@ -148,9 +155,10 @@ def _verify_provenance(
     if (
         sha256_file(evidence_path) != digest
         or evidence.get("source_run_dir") != request.get("reuse_data_from")
+        or evidence.get("source_request_sha256")
+        != request.get("reuse_source_request_sha256")
         or local_manifest_hash != request.get("reuse_manifest_sha256")
         or any(evidence.get(name) != value for name, value in expected_hashes.items())
-        or not _is_sha256(evidence.get("source_request_sha256"))
         or report.get("data_provenance")
         != {"mode": "reused", "evidence": evidence}
     ):
