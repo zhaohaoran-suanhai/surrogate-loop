@@ -46,7 +46,9 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 (E, nu, P, theta, y0, w) -> (u_x(x, y), u_y(x, y))
 ```
 
-已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理保护。真实微型跨环境测试、calibration 和 Smoke 均已走通，Smoke 状态为 `development_complete`；它证明流程可运行，但不构成 Full 确认性精度验收。当前未完成二维线弹性 Full。
+已实现严格配置、确定性采样、FEniCSx/PyAMG 求解和物理门禁、版本化 JSON/NPZ 协议、POD-RBF 基线、Vector DeepONet、开发评价、Full 封存状态机及可信推理保护。真实微型跨环境测试、calibration、Smoke 和 Full 均已走通；Smoke 保留为 `development_complete` 开发证据，Full 运行 `elasticity-full-ba8ff8e584d9` 已在 736 个全新 FEniCSx 样本上完成一次性封存验收，状态为 `accepted`。
+
+Full 采用 `directional_linear_v2`，封存测试的全场相对 L2 中位/P95/最差为 `0.2519%/1.5152%/4.4492%`，当前 CPU 基准加速约 `931×`，正常可信推理入口已经验证。该结论只覆盖冻结的悬臂梁模板、参数域和验收摘要，不代表域外或生产认证。
 
 ## 环境要求
 
@@ -103,6 +105,7 @@ uv run surrogate-loop elasticity2d validate --config examples/elasticity_2d_cant
 uv run surrogate-loop elasticity2d calibrate --config examples/elasticity_2d_cantilever/calibration.json --output-dir runs/elasticity-calibration
 uv run surrogate-loop elasticity2d run --config examples/elasticity_2d_cantilever/smoke.json --runs-dir runs --request "训练二维悬臂梁位移场代理模型"
 uv run surrogate-loop elasticity2d report --run-dir runs/示例运行标识
+uv run surrogate-loop elasticity2d predict --run-dir runs/elasticity-full-ba8ff8e584d9 --e 3 --nu 0.3 --p 0.006 --theta -1.5707963268 --y0 0.5 --w 0.12 --x 4 --y 0.5
 ```
 
 例如，用户可以先用自然语言告诉 Codex：
@@ -126,6 +129,7 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 - [项目文档地图](docs/README.md)：新对话按演示、运行、诊断或开发新 PDE 选择最短阅读路径。
 - [当前能力与状态](docs/当前能力与状态.md)：查看三个闭环的最高证据、当前指标与功能边界。
 - [Agent 协作指南](docs/guides/Agent协作指南.md)：了解操作前说明、进度播报、完成报告和授权边界。
+- [第 01 期代理模型训练闭环周报](docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md)：20 分钟管理层汇报与技术证据链。
 
 二维线弹性是当前推荐演示主线，可从[二维线弹性演示手册](docs/demos/二维线弹性演示手册.md)选择快速展示或从头运行；详细运行合同见[二维线弹性闭环操作指南](docs/guides/二维线弹性闭环操作指南.md)。
 

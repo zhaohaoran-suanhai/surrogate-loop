@@ -67,7 +67,9 @@ def test_capability_status_distinguishes_evidence_levels() -> None:
         "Full",
     ):
         assert required in content
-    assert "二维线弹性当前未完成 Full" in content
+    assert "elasticity-full-ba8ff8e584d9" in content
+    assert "二维线弹性 Full" in content
+    assert "二维线弹性当前未完成 Full" not in content
 
 
 def test_agent_rules_define_minimum_reading_order_and_authority() -> None:
@@ -104,6 +106,15 @@ def test_root_readme_links_agent_entries() -> None:
     content = _read("README.md")
     assert "docs/README.md" in content
     assert "docs/guides/Agent协作指南.md" in content
+    assert "docs/周报/2026-07-17-第01期-代理模型训练闭环周报.md" in content
+    assert "当前未完成二维线弹性 Full" not in content
+
+
+def test_agent_rules_record_current_elasticity_full_evidence() -> None:
+    content = _read("AGENTS.md")
+    assert "二维线弹性 Full" in content
+    assert "accepted" in content
+    assert "未完成 Full" not in content
 
 
 def test_elasticity_demo_has_two_modes_formulas_and_six_stages() -> None:

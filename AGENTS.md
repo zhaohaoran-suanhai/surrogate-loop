@@ -42,6 +42,7 @@ uv run pytest
 
 - 普通假求解 E2E 只证明编排、保护机制和产物兼容性。
 - 真实求解器 E2E 证明跨环境链路；calibration 证明数值与物理门禁；Smoke 是开发证据；Full 是一次性确认性验收。
-- 二维线弹性当前完成 calibration 和 Smoke，未完成 Full，不能表述为已通过确认性精度验收。
-- 未经用户新的明确确认，不启动 Full、不放宽门槛、不绕过摘要、不把失败样本静默删除。
+- 二维线弹性 Full 已完成 calibration、Smoke 和一次确认性验收；可信运行 `runs/elasticity-full-ba8ff8e584d9/` 状态为 `accepted`。
+- 已有 accepted Full 可以只读报告和域内推理；重新训练、新建 Full 身份或再次消费新的 sealed-test 仍须用户明确确认。
+- 不放宽门槛、不绕过摘要、不把失败样本静默删除。
 - 从头运行发生恢复或阶段复用时，必须明确说明复用了什么，不能称为完全从零运行。
