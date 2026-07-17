@@ -147,12 +147,18 @@ def read_elasticity_report(
     if state is not ElasticityRunState.TRAINED:
         raise RuntimeError("二维弹性运行尚无可读报告")
     stage = _read_json(directory / "development_stage.json")
-    if set(stage) != {
+    version = stage.get("schema_version")
+    legacy_stage_fields = {
         "schema_version",
         "status",
         "result_sha256",
         "diagnostic_sha256",
-    } or stage.get("schema_version") != 5:
+    }
+    current_stage_fields = legacy_stage_fields | {"dataset_provenance_sha256"}
+    if not (
+        (version == 5 and set(stage) == legacy_stage_fields)
+        or (version == 6 and set(stage) == current_stage_fields)
+    ):
         raise RuntimeError("二维弹性 Smoke 阶段字段无效")
     result_path = directory / "development_evaluation.json"
     diagnostics = stage.get("diagnostic_sha256")
@@ -163,16 +169,59 @@ def read_elasticity_report(
     ):
         raise RuntimeError("二维弹性 Smoke 报告完整性校验失败")
     payload = _read_json(result_path)
-    if set(payload) != {
+    legacy_report_fields = {
         "schema_version",
         "status",
         "deeponet_metrics",
         "pod_rbf_metrics",
         "training",
         "timing",
-    } or payload.get("schema_version") != 5 or payload.get("status") != "development_complete":
+    }
+    current_report_fields = legacy_report_fields | {
+        "model_architecture",
+        "data_provenance",
+        "directional_metrics",
+    }
+    if version == 6 and not _verify_development_provenance(directory, stage, payload):
+        raise RuntimeError("二维弹性 Smoke 数据来源完整性校验失败")
+    valid_report = (
+        payload.get("status") == "development_complete"
+        and (
+            (version == 5 and set(payload) == legacy_report_fields)
+            or (
+                version == 6
+                and set(payload) == current_report_fields
+                and payload.get("model_architecture") == "directional_linear_v2"
+            )
+        )
+    )
+    if not valid_report or payload.get("schema_version") != version:
         raise RuntimeError("二维弹性 Smoke 报告字段无效")
     return state, payload
+
+
+def _verify_development_provenance(
+    run_dir: Path,
+    stage: dict[str, object],
+    report: dict[str, object],
+) -> bool:
+    path = run_dir / "dataset_reuse.json"
+    digest = stage.get("dataset_provenance_sha256")
+    if digest is None:
+        return not path.exists() and report.get("data_provenance") == {
+            "mode": "generated"
+        }
+    if not isinstance(digest, str) or len(digest) != 64 or not path.is_file():
+        return False
+    try:
+        evidence = _read_json(path)
+    except RuntimeError:
+        return False
+    return bool(
+        sha256_file(path) == digest
+        and report.get("data_provenance")
+        == {"mode": "reused", "evidence": evidence}
+    )
 
 
 def predict_elasticity_points(

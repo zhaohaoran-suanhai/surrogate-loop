@@ -298,6 +298,14 @@ def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypa
     state, report = read_elasticity_report(first.run_dir)
     assert state is ElasticityRunState.TRAINED
     assert report["status"] == "development_complete"
+    assert report["schema_version"] == 6
+    assert report["model_architecture"] == "directional_linear_v2"
+    assert set(report["directional_metrics"]) == {
+        "near_horizontal",
+        "oblique",
+        "near_vertical",
+    }
+    assert report["data_provenance"] == {"mode": "generated"}
     assert report["training"]["selected_seed"] == 20260716
     assert report["timing"]["speedup"] > 0.0
 
@@ -308,6 +316,48 @@ def test_smoke_pipeline_uses_development_evidence_and_resumes(tmp_path, monkeypa
     )
     assert recovered == first
     assert generate_calls == 2
+
+    (first.run_dir / "dataset_reuse.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="完整性|来源"):
+        read_elasticity_report(first.run_dir)
+
+
+def test_legacy_schema_5_smoke_report_remains_readable(tmp_path) -> None:
+    run_dir = tmp_path / "legacy"
+    diagnostics = run_dir / "diagnostics"
+    diagnostics.mkdir(parents=True)
+    (run_dir / "status.json").write_text('{"state":"trained"}', encoding="utf-8")
+    displacement = diagnostics / "displacement_comparison.png"
+    stress = diagnostics / "fenicsx_stress_summary.png"
+    displacement.write_bytes(b"displacement")
+    stress.write_bytes(b"stress")
+    report = {
+        "schema_version": 5,
+        "status": "development_complete",
+        "deeponet_metrics": {"median_relative_l2": 0.01},
+        "pod_rbf_metrics": {"median_relative_l2": 0.02},
+        "training": {},
+        "timing": {},
+    }
+    report_path = run_dir / "development_evaluation.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    stage = {
+        "schema_version": 5,
+        "status": "complete",
+        "result_sha256": sha256_file(report_path),
+        "diagnostic_sha256": {
+            "diagnostics/displacement_comparison.png": sha256_file(displacement),
+            "diagnostics/fenicsx_stress_summary.png": sha256_file(stress),
+        },
+    }
+    (run_dir / "development_stage.json").write_text(
+        json.dumps(stage), encoding="utf-8"
+    )
+
+    state, loaded = read_elasticity_report(run_dir)
+
+    assert state is ElasticityRunState.TRAINED
+    assert loaded == report
 
 
 def _freeze_inputs(tmp_path: Path) -> dict[str, object]:

@@ -6,6 +6,7 @@ import pytest
 
 from surrogate_loop.operator.elasticity2d.config import load_elasticity_spec
 from surrogate_loop.operator.elasticity2d.evaluation import (
+    compute_directional_error_summary,
     compute_elasticity_metrics,
     elasticity_is_acceptable,
 )
@@ -102,6 +103,31 @@ def test_uniform_field_scaling_has_matching_relative_metrics() -> None:
     np.testing.assert_allclose(metrics.p95_tip_error, 0.1)
     np.testing.assert_allclose(metrics.p95_compliance_error, 0.1)
     assert metrics.clamp_max_absolute_error == 0.0
+
+
+def test_directional_error_summary_uses_fixed_angle_groups() -> None:
+    angles = np.array([0.0, 0.2, 0.7, 1.0, 1.4, np.pi / 2])
+    parameters = np.column_stack(
+        (
+            np.full(6, 2.0),
+            np.full(6, 0.3),
+            np.full(6, 0.005),
+            angles,
+            np.full(6, 0.5),
+            np.full(6, 0.1),
+        )
+    )
+    reference = np.ones((6, 3, 2), dtype=np.float64)
+    prediction = reference * np.linspace(1.0, 1.5, 6)[:, None, None]
+
+    summary = compute_directional_error_summary(reference, prediction, parameters)
+
+    assert set(summary) == {"near_horizontal", "oblique", "near_vertical"}
+    assert summary["near_horizontal"]["condition"] == "abs_sin_theta < 0.35"
+    assert summary["oblique"]["condition"] == "0.35 <= abs_sin_theta < 0.85"
+    assert summary["near_vertical"]["condition"] == "abs_sin_theta >= 0.85"
+    assert sum(group["count"] for group in summary.values()) == 6
+    assert all(group["count"] == 2 for group in summary.values())
 
 
 def test_acceptance_requires_every_metric_and_speedup() -> None:

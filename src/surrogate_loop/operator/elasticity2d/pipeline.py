@@ -28,7 +28,10 @@ from surrogate_loop.operator.elasticity2d.dataset import (
     load_development_partitions,
 )
 from surrogate_loop.operator.elasticity2d.deeponet import build_elasticity_deeponet
-from surrogate_loop.operator.elasticity2d.evaluation import compute_elasticity_metrics
+from surrogate_loop.operator.elasticity2d.evaluation import (
+    compute_directional_error_summary,
+    compute_elasticity_metrics,
+)
 from surrogate_loop.operator.elasticity2d.pod_rbf import PodRbfBaseline
 from surrogate_loop.operator.elasticity2d.problem import elasticity_basis_features
 from surrogate_loop.operator.elasticity2d.reporting import write_smoke_diagnostics
@@ -235,6 +238,9 @@ def _evaluate_development(
     deeponet_metrics = compute_elasticity_metrics(
         dataset.fields, prediction, dataset.parameters, dataset.coordinates
     ).to_dict()
+    directional_metrics = compute_directional_error_summary(
+        dataset.fields, prediction, dataset.parameters
+    )
     pod_prediction = baseline.predict(dataset.parameters)
     pod_metrics = compute_elasticity_metrics(
         dataset.fields, pod_prediction, dataset.parameters, dataset.coordinates
@@ -263,6 +269,7 @@ def _evaluate_development(
         "speedup": fenicsx_median / neural_seconds,
     }
     training = _training_summary(selected)
+    data_provenance = _data_provenance(run_dir)
     result = ElasticityRunResult(
         run_dir=run_dir,
         status="development_complete",
@@ -272,8 +279,11 @@ def _evaluate_development(
     _write_json_atomic(
         run_dir / "development_evaluation.json",
         {
-            "schema_version": 5,
+            "schema_version": 6,
             "status": result.status,
+            "model_architecture": spec.model.architecture,
+            "data_provenance": data_provenance,
+            "directional_metrics": directional_metrics,
             "deeponet_metrics": deeponet_metrics,
             "pod_rbf_metrics": pod_metrics,
             "training": training,
@@ -283,10 +293,15 @@ def _evaluate_development(
     _write_json_atomic(
         run_dir / "development_stage.json",
         {
-            "schema_version": 5,
+            "schema_version": 6,
             "status": "complete",
             "result_sha256": sha256_file(run_dir / "development_evaluation.json"),
             "diagnostic_sha256": diagnostic_hashes,
+            "dataset_provenance_sha256": (
+                sha256_file(run_dir / "dataset_reuse.json")
+                if (run_dir / "dataset_reuse.json").is_file()
+                else None
+            ),
         },
     )
     return result
@@ -318,6 +333,19 @@ def _training_summary(selected: SelectedTraining) -> dict[str, object]:
             for candidate in selected.candidates
         ],
     }
+
+
+def _data_provenance(run_dir: Path) -> dict[str, object]:
+    path = run_dir / "dataset_reuse.json"
+    if not path.exists():
+        return {"mode": "generated"}
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("二维弹性数据复用来源证据无效") from error
+    if not isinstance(evidence, dict):
+        raise RuntimeError("二维弹性数据复用来源证据无效")
+    return {"mode": "reused", "evidence": evidence}
 
 
 def _solver_timing_summary(
@@ -410,17 +438,72 @@ def _read_result(path: Path, run_dir: Path) -> ElasticityRunResult:
 def _stage_hash_matches(stage_path: Path, result_path: Path) -> bool:
     try:
         payload = json.loads(stage_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return False
+        common_valid = bool(
+            payload.get("status") == "complete"
+            and payload.get("result_sha256") == sha256_file(result_path)
+            and _diagnostic_hashes_match(
+                stage_path.parent, payload.get("diagnostic_sha256")
+            )
+        )
+        if payload.get("schema_version") == 5:
+            return bool(
+                set(payload)
+                == {"schema_version", "status", "result_sha256", "diagnostic_sha256"}
+                and common_valid
+            )
+        if payload.get("schema_version") != 6 or set(payload) != {
+            "schema_version",
+            "status",
+            "result_sha256",
+            "diagnostic_sha256",
+            "dataset_provenance_sha256",
+        }:
+            return False
+        result = json.loads(result_path.read_text(encoding="utf-8"))
         return bool(
-            isinstance(payload, dict)
-            and set(payload)
-            == {"schema_version", "status", "result_sha256", "diagnostic_sha256"}
-            and payload["schema_version"] == 5
-            and payload["status"] == "complete"
-            and payload["result_sha256"] == sha256_file(result_path)
-            and _diagnostic_hashes_match(stage_path.parent, payload["diagnostic_sha256"])
+            common_valid
+            and isinstance(result, dict)
+            and set(result)
+            == {
+                "schema_version",
+                "status",
+                "model_architecture",
+                "data_provenance",
+                "directional_metrics",
+                "deeponet_metrics",
+                "pod_rbf_metrics",
+                "training",
+                "timing",
+            }
+            and result.get("schema_version") == 6
+            and _dataset_provenance_matches(
+                stage_path.parent,
+                payload.get("dataset_provenance_sha256"),
+                result.get("data_provenance"),
+            )
         )
     except (OSError, json.JSONDecodeError, RuntimeError):
         return False
+
+
+def _dataset_provenance_matches(
+    run_dir: Path, digest: object, report_provenance: object
+) -> bool:
+    path = run_dir / "dataset_reuse.json"
+    if digest is None:
+        return not path.exists() and report_provenance == {"mode": "generated"}
+    if not isinstance(digest, str) or len(digest) != 64 or not path.is_file():
+        return False
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(
+        sha256_file(path) == digest
+        and report_provenance == {"mode": "reused", "evidence": evidence}
+    )
 
 
 def _diagnostic_hashes_match(run_dir: Path, payload: object) -> bool:
