@@ -50,6 +50,12 @@ u(x,0) = A*sin(pi*x) + B*sin(2*pi*x)
 
 Full 采用 `directional_linear_v2`，封存测试的全场相对 L2 中位/P95/最差为 `0.2519%/1.5152%/4.4492%`，当前 CPU 基准加速约 `931×`，正常可信推理入口已经验证。该结论只覆盖冻结的悬臂梁模板、参数域和验收摘要，不代表域外或生产认证。
 
+### 二维顶盖驱动方腔 POD-RBF
+
+第四个闭环面向固定单位方腔的稳态不可压层流，以 `Re ∈ [10,400]` 为输入，预测完整的 `u、v、p'` 场。真实高保真数据由相邻 `fluent-automation` 仓库通过可信 Runner 调用 Fluent，当前仓库负责确定性采样、严格协议导入、POD-RBF 选模、评价、封存验收和受保护推理。
+
+当前已完成合成 Fluent 产物的跨进程工程 E2E，以及 Re=100 `vertical` 的真实 Fluent 求解、独立重载和代理侧 `protocol_verified` 导入。真实运行 `cavity2d-vertical-re100-20260723-r6` 证明单样本数据链已走通；多 Re 训练仍须依次完成 calibration、Smoke 和 Full，只有 `accepted` Full 才开放正常推理。完整边界与命令见[二维方腔算例说明](examples/cavity_2d_fluent/README.md)。
+
 ## 环境要求
 
 - Windows
@@ -108,6 +114,17 @@ uv run surrogate-loop elasticity2d report --run-dir runs/示例运行标识
 uv run surrogate-loop elasticity2d predict --run-dir runs/elasticity-full-ba8ff8e584d9 --e 3 --nu 0.3 --p 0.006 --theta -1.5707963268 --y0 0.5 --w 0.12 --x 4 --y 0.5
 ```
 
+二维方腔接口：
+
+```powershell
+uv run surrogate-loop cavity2d validate --config examples/cavity_2d_fluent/vertical.json
+uv run surrogate-loop cavity2d plan --config examples/cavity_2d_fluent/vertical.json --output-dir runs/cavity2d-vertical-plan
+uv run surrogate-loop cavity2d verify-solver --config examples/cavity_2d_fluent/vertical.json --fluent-pipeline ../fluent-automation/runs/cavity2d-vertical/pipeline-complete.json --output-dir runs/cavity2d-vertical-verified
+uv run surrogate-loop cavity2d run --config examples/cavity_2d_fluent/smoke.json --fluent-pipeline ../fluent-automation/runs/cavity2d-smoke/pipeline-complete.json --runs-dir runs --request "训练多 Re 方腔 POD-RBF"
+uv run surrogate-loop cavity2d report --run-dir runs/示例运行标识
+uv run surrogate-loop cavity2d predict --run-dir runs/accepted-full-运行标识 --re 100 --output predictions/cavity-re100.npz
+```
+
 例如，用户可以先用自然语言告诉 Codex：
 
 > 使用 gamma 在 -1 到 1 之间的强迫反应 ODE，运行冒烟训练，比较全部候选模型并预测 gamma=0.35 时的 u(1)。
@@ -158,7 +175,8 @@ Codex 将该意图映射到白名单配置 `examples/forced_reaction_scalar/smok
 - [第一个标量 ODE 算例](examples/forced_reaction_scalar/README.md)
 - [一维热传导神经算子算例](examples/heat_1d_operator/README.md)
 - [二维悬臂梁线弹性神经算子算例](examples/elasticity_2d_cantilever/README.md)
+- [二维顶盖驱动方腔 Fluent + POD-RBF 算例](examples/cavity_2d_fluent/README.md)
 
 ## 明确不支持
 
-当前版本不支持任意 PDE、任意二维/三维几何、非线性或三维弹性、真实 CFD 求解器、FNO、PINN/PINO、多 GPU、Web UI、运行时外部 LLM API、自动外推或生产部署。二维 PDE 目前仅支持已注册的平面应力悬臂梁模板。
+当前版本不支持任意 PDE、任意二维/三维几何、非线性或三维弹性、任意 CFD 几何或边界条件、FNO、PINN/PINO、多 GPU、Web UI、运行时外部 LLM API、自动外推或生产部署。CFD 首版仅注册固定二维顶盖驱动单位方腔；真实 Fluent 已完成 Re=100 协议切片，多 Re 训练与确认性验收仍待分级运行。

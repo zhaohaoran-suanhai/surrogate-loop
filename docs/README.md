@@ -25,6 +25,7 @@
 - [标量 ODE 闭环](guides/标量闭环操作指南.md)
 - [一维热传导闭环](guides/一维热传导闭环操作指南.md)
 - [二维线弹性闭环](guides/二维线弹性闭环操作指南.md)
+- [二维顶盖驱动方腔 Fluent + POD-RBF 闭环](../examples/cavity_2d_fluent/README.md)
 - [Windows 跨机迁移指南](guides/Windows跨机迁移指南.md)：在另一台 Windows 11 + NVIDIA GPU 电脑上恢复完整链路或导入 accepted 运行。
 
 先执行配置校验，再根据指南判断是 Smoke、Full 还是只读报告。二维线弹性 Full 必须重新获得用户明确授权。
@@ -55,6 +56,7 @@
 - [标量 ODE 算例](../examples/forced_reaction_scalar/README.md)
 - [一维热传导算例](../examples/heat_1d_operator/README.md)
 - [二维线弹性悬臂梁算例](../examples/elasticity_2d_cantilever/README.md)
+- [二维顶盖驱动方腔 Fluent + POD-RBF 算例](../examples/cavity_2d_fluent/README.md)
 
 ## 设计规格
 
