@@ -97,6 +97,35 @@ def build_parser() -> argparse.ArgumentParser:
     elasticity_predict.add_argument("--nx", type=int)
     elasticity_predict.add_argument("--ny", type=int)
     elasticity_predict.add_argument("--output", type=Path)
+
+    cavity = subparsers.add_parser(
+        "cavity2d",
+        help="二维顶盖驱动方腔 POD-RBF 闭环",
+    )
+    cavity_commands = cavity.add_subparsers(dest="cavity_command")
+    cavity_validate = cavity_commands.add_parser("validate", help="校验方腔配置")
+    cavity_validate.add_argument("--config", type=Path, required=True)
+    cavity_plan = cavity_commands.add_parser("plan", help="生成确定性 Fluent 请求")
+    cavity_plan.add_argument("--config", type=Path, required=True)
+    cavity_plan.add_argument("--output-dir", type=Path, required=True)
+    cavity_verify = cavity_commands.add_parser(
+        "verify-solver",
+        help="验证垂直切片或校准 Fluent 协议",
+    )
+    cavity_verify.add_argument("--config", type=Path, required=True)
+    cavity_verify.add_argument("--fluent-pipeline", type=Path, required=True)
+    cavity_verify.add_argument("--output-dir", type=Path, required=True)
+    cavity_run = cavity_commands.add_parser("run", help="训练并验收方腔 POD-RBF")
+    cavity_run.add_argument("--config", type=Path, required=True)
+    cavity_run.add_argument("--fluent-pipeline", type=Path, required=True)
+    cavity_run.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    cavity_run.add_argument("--request", default="通过真实 Fluent 数据训练二维方腔代理模型")
+    cavity_report = cavity_commands.add_parser("report", help="读取方腔运行报告")
+    cavity_report.add_argument("--run-dir", type=Path, required=True)
+    cavity_predict = cavity_commands.add_parser("predict", help="执行域内方腔场预测")
+    cavity_predict.add_argument("--run-dir", type=Path, required=True)
+    cavity_predict.add_argument("--re", type=float, required=True)
+    cavity_predict.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -104,7 +133,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
     try:
-        if arguments.command == "elasticity2d":
+        if arguments.command == "cavity2d":
+            _handle_cavity(arguments)
+        elif arguments.command == "elasticity2d":
             _handle_elasticity(arguments)
         elif arguments.command == "operator":
             _handle_operator(arguments)
@@ -254,6 +285,82 @@ def _handle_operator(arguments: argparse.Namespace) -> None:
         _print_json({"output": str(output.resolve()), "shape": list(field.shape)})
         return
     raise ValueError("请为 operator 指定 validate、run、report 或 predict 子命令")
+
+
+def _handle_cavity(arguments: argparse.Namespace) -> None:
+    from surrogate_loop.operator.cavity2d.config import load_cavity_spec
+    from surrogate_loop.operator.cavity2d.inference import (
+        predict_accepted_cavity,
+        read_cavity_report,
+        verify_solver_pipeline,
+    )
+    from surrogate_loop.operator.cavity2d.pipeline import run_cavity_pipeline
+    from surrogate_loop.operator.cavity2d.sampling import (
+        build_cavity_sample_plan,
+        write_solver_request,
+    )
+
+    command = arguments.cavity_command
+    if command == "validate":
+        spec = load_cavity_spec(arguments.config)
+        _print_json({"status": "valid", "mode": spec.mode})
+        return
+    if command == "plan":
+        spec = load_cavity_spec(arguments.config)
+        request = write_solver_request(
+            arguments.output_dir,
+            spec,
+            build_cavity_sample_plan(spec),
+        )
+        _print_json(
+            {
+                "status": "planned",
+                "mode": spec.mode,
+                "solver_request": str(request.resolve()),
+            }
+        )
+        return
+    if command == "verify-solver":
+        _print_json(
+            verify_solver_pipeline(
+                arguments.config,
+                arguments.fluent_pipeline,
+                arguments.output_dir,
+            )
+        )
+        return
+    if command == "run":
+        result = run_cavity_pipeline(
+            arguments.config,
+            arguments.fluent_pipeline,
+            arguments.runs_dir,
+            arguments.request,
+        )
+        _print_json(
+            {
+                "run_dir": str(result.run_dir.resolve()),
+                "status": result.status,
+                "selected_model": result.selected_model,
+                "validation_metrics": result.validation_metrics,
+                "test_metrics": result.test_metrics,
+            }
+        )
+        return
+    if command == "report":
+        _print_json(read_cavity_report(arguments.run_dir))
+        return
+    if command == "predict":
+        _print_json(
+            predict_accepted_cavity(
+                arguments.run_dir,
+                arguments.re,
+                arguments.output,
+            )
+        )
+        return
+    raise ValueError(
+        "请为 cavity2d 指定 validate、plan、verify-solver、run、report 或 predict 子命令"
+    )
 
 
 def _handle_elasticity(arguments: argparse.Namespace) -> None:

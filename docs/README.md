@@ -16,7 +16,7 @@
 
 ### 演示
 
-管理层工作汇报优先读取[第 01 期代理模型训练闭环周报](周报/2026-07-17-第01期-代理模型训练闭环周报.md)。技术演示再读[当前能力与状态](当前能力与状态.md)，确认可展示的证据等级；当前推荐以二维线弹性悬臂梁为主线，从[演示入口](demos/README.md)选择快速展示或从头运行，并按[二维线弹性演示手册](demos/二维线弹性演示手册.md)讲解公式、六阶段进度和证据边界。
+当前管理层工作汇报优先读取[第 02 期二维方腔代理模型闭环周报](周报/2026-07-24-第02期-二维方腔代理模型闭环周报.md)，其中包含 Full `accepted` 指标、Re=310.5 未见工况的 Fluent/代理对比图和分口径性能数据。技术复核再读[当前能力与状态](当前能力与状态.md)和[二维顶盖驱动方腔算例](../examples/cavity_2d_fluent/README.md)。前三个闭环的阶段性汇报保留在[第 01 期周报](周报/2026-07-17-第01期-代理模型训练闭环周报.md)；二维线弹性现场演示仍可从[演示入口](demos/README.md)和[二维线弹性演示手册](demos/二维线弹性演示手册.md)进入。
 
 ### 运行已有闭环
 
@@ -25,9 +25,10 @@
 - [标量 ODE 闭环](guides/标量闭环操作指南.md)
 - [一维热传导闭环](guides/一维热传导闭环操作指南.md)
 - [二维线弹性闭环](guides/二维线弹性闭环操作指南.md)
+- [二维顶盖驱动方腔 Fluent + POD-RBF 闭环](../examples/cavity_2d_fluent/README.md)
 - [Windows 跨机迁移指南](guides/Windows跨机迁移指南.md)：在另一台 Windows 11 + NVIDIA GPU 电脑上恢复完整链路或导入 accepted 运行。
 
-先执行配置校验，再根据指南判断是 Smoke、Full 还是只读报告。二维线弹性 Full 必须重新获得用户明确授权。
+先执行配置校验，再根据指南判断是 Smoke、Full 还是只读报告。任何会重新启动高成本求解、训练 Full 或消费新 sealed-test 的操作都必须重新获得用户明确授权；读取已存在的 accepted 报告和执行受保护域内推理不等于重新验收。
 
 ### 诊断
 
@@ -40,6 +41,7 @@
 ## 稳定文档
 
 - [项目周报](周报/README.md)
+- [第 02 期二维方腔代理模型闭环周报](周报/2026-07-24-第02期-二维方腔代理模型闭环周报.md)
 - [第 01 期代理模型训练闭环周报](周报/2026-07-17-第01期-代理模型训练闭环周报.md)
 - [环境与验证](guides/环境与验证.md)
 - [Windows 跨机迁移指南](guides/Windows跨机迁移指南.md)
@@ -55,6 +57,7 @@
 - [标量 ODE 算例](../examples/forced_reaction_scalar/README.md)
 - [一维热传导算例](../examples/heat_1d_operator/README.md)
 - [二维线弹性悬臂梁算例](../examples/elasticity_2d_cantilever/README.md)
+- [二维顶盖驱动方腔 Fluent + POD-RBF 算例](../examples/cavity_2d_fluent/README.md)
 
 ## 设计规格
 

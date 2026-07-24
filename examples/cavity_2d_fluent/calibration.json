@@ -1,0 +1,19 @@
+{
+  "mesh_sha256": "9B09F1287DB71978E10C67A528616C1C95118CFCF4F763ABAD047DF565E6A6DD",
+  "mode": "calibration",
+  "problem": {
+    "density": 1.0,
+    "lid_speed": 1.0,
+    "outputs": ["u", "v", "p_prime"],
+    "problem_id": "fluent_lid_driven_cavity_steady_v1",
+    "reynolds_high": 400.0,
+    "reynolds_low": 10.0
+  },
+  "sampling": {
+    "explicit_reynolds": [10.0, 100.0, 400.0],
+    "seed": null,
+    "test_cases": 0,
+    "train_cases": 0,
+    "validation_cases": 0
+  }
+}
